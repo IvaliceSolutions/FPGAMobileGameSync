@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .compare import CompareError, compare_manifests, load_manifest
 from .config import ConfigError, load_config
+from .object_store import LocalObjectStore, ObjectStoreError
 from .planner import PlanError, build_plan
 from .scanner import ScanError, scan
 
@@ -117,6 +118,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pretty-print JSON output.",
     )
 
+    store_parser = subparsers.add_parser(
+        "store",
+        help="Inspect a local object-store directory that simulates S3.",
+    )
+    store_subparsers = store_parser.add_subparsers(dest="store_command", required=True)
+    store_scan_parser = store_subparsers.add_parser(
+        "scan",
+        help="Scan local object-store contents.",
+    )
+    store_scan_parser.add_argument(
+        "--root",
+        required=True,
+        help="Object-store root directory.",
+    )
+    store_scan_parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output.",
+    )
+
     return parser
 
 
@@ -172,7 +193,17 @@ def main(argv: list[str] | None = None) -> int:
             )
             sys.stdout.write("\n")
             return 0
-    except (CompareError, ConfigError, PlanError, ScanError) as exc:
+        if args.command == "store" and args.store_command == "scan":
+            manifest = LocalObjectStore(Path(args.root)).scan()
+            json.dump(
+                manifest,
+                sys.stdout,
+                indent=2 if args.pretty else None,
+                sort_keys=True,
+            )
+            sys.stdout.write("\n")
+            return 0
+    except (CompareError, ConfigError, ObjectStoreError, PlanError, ScanError) as exc:
         parser.exit(2, f"error: {exc}\n")
 
     parser.exit(2, "error: unknown command\n")

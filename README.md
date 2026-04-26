@@ -115,6 +115,36 @@ Plan operations are dry-run oriented and currently include:
 - `trash_local`
 - `conflict`
 
+## Local Object Store
+
+A filesystem-backed object store is available to simulate the future S3/Garage
+bucket without touching the network:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli store scan \
+  --root /tmp/fpgms-store \
+  --pretty
+```
+
+It scans objects under this layout:
+
+```text
+systems/<system>/<type>/<content-path>
+```
+
+For example:
+
+```text
+/tmp/fpgms-store/systems/gba/games/Metroid Fusion.gba
+/tmp/fpgms-store/systems/snes/saves/Chrono Trigger.srm
+```
+
+Trash objects are moved under:
+
+```text
+trash/<timestamp-utc>/<origin-device>/systems/...
+```
+
 ## Runtime Notes
 
 YAML loading requires `PyYAML`. When it is not available, use the generated
