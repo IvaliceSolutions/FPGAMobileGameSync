@@ -9,6 +9,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from .save_paths import canonical_save_content_path, is_convertible_save
+
 
 class ScanError(Exception):
     """Raised when a scan cannot be completed."""
@@ -22,6 +24,7 @@ class ScanItem:
     absolute_path: str
     relative_path: str
     content_path: str
+    native_content_path: str
     sync_key: str
     size: int
     modified_ns: int
@@ -105,6 +108,7 @@ def _scan_system_type(
             if _matches_extensions(absolute, extensions):
                 items.append(
                     _scan_file(
+                        config=config,
                         device=device,
                         system=system,
                         content_type=content_type,
@@ -119,6 +123,7 @@ def _scan_system_type(
                 if _matches_extensions(file_path, extensions):
                     items.append(
                         _scan_file(
+                            config=config,
                             device=device,
                             system=system,
                             content_type=content_type,
@@ -142,6 +147,7 @@ def _scan_system_type(
 
 
 def _scan_file(
+    config: dict[str, Any],
     device: str,
     system: str,
     content_type: str,
@@ -150,7 +156,15 @@ def _scan_file(
     path: Path,
 ) -> ScanItem:
     stat = path.stat()
-    content_path = str(path.relative_to(content_root))
+    native_content_path = str(path.relative_to(content_root))
+    content_path = native_content_path
+    if is_convertible_save(config=config, system=system, content_type=content_type):
+        content_path = canonical_save_content_path(
+            config=config,
+            system=system,
+            device=device,
+            native_content_path=native_content_path,
+        )
     return ScanItem(
         device=device,
         system=system,
@@ -158,6 +172,7 @@ def _scan_file(
         absolute_path=str(path),
         relative_path=str(path.relative_to(device_root)),
         content_path=content_path,
+        native_content_path=native_content_path,
         sync_key=f"systems/{system}/{content_type}/{content_path}",
         size=stat.st_size,
         modified_ns=stat.st_mtime_ns,

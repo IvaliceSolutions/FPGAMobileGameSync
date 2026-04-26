@@ -294,6 +294,39 @@ class ExecutorTests(unittest.TestCase):
                 ).exists()
             )
 
+    def test_download_save_uses_target_native_extension_from_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store_root = root / "store"
+            target_root = root / "target"
+            store_saves = store_root / "systems/gba/saves"
+            store_saves.mkdir(parents=True)
+            target_root.mkdir()
+
+            source_file = store_saves / "Golden Sun.sav"
+            source_file.write_bytes(b"save")
+            plan = {
+                "mode": "download",
+                "source": "s3",
+                "target": "thor",
+                "actions": [
+                    {
+                        "operation": "download",
+                        "reason": "added",
+                        "source": _item(source_file, "Golden Sun.sav", kind="saves"),
+                    }
+                ],
+            }
+
+            apply_plan_to_local_target(
+                plan,
+                target_root=target_root,
+                config=_config(),
+            )
+
+            self.assertTrue((target_root / "Golden Sun.srm").exists())
+            self.assertFalse((target_root / "Golden Sun.sav").exists())
+
 
 def _item(path: Path, content_path: str, kind: str = "games") -> dict:
     return {
@@ -307,6 +340,24 @@ def _item(path: Path, content_path: str, kind: str = "games") -> dict:
         "size": path.stat().st_size if path.exists() else 0,
         "modified_ns": 1,
         "sha256": "test",
+    }
+
+
+def _config() -> dict:
+    return {
+        "devices": {
+            "mister": {"local": {"root": "/media/fat"}},
+            "thor": {"local": {"root": "/storage/emulated/0"}},
+        },
+        "systems": {
+            "gba": {
+                "save_conversion": {
+                    "strategy": "raw_same_content",
+                    "mister_to_thor": {"rename_extension_to": ".srm"},
+                    "thor_to_mister": {"rename_extension_to": ".sav"},
+                }
+            }
+        },
     }
 
 

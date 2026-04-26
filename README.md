@@ -30,7 +30,8 @@ This repository currently contains:
 - `mister-thor-sync.yaml`: the human-readable sync configuration.
 - `mister-thor-sync.json`: a generated JSON version for runtimes without
   PyYAML.
-- `fpgms`: a small Python CLI with an initial `scan` command.
+- `fpgms`: a Python CLI for scanning, comparing, planning, applying local-store
+  plans, and converting saves.
 
 ## Development Usage
 
@@ -52,11 +53,15 @@ SHA-256 hashes.
 Each scanned item contains:
 
 - `relative_path`: path relative to the device root.
-- `content_path`: path relative to the configured content folder.
+- `content_path`: canonical path used for comparison and object-store keys.
+- `native_content_path`: actual path relative to the configured content folder
+  on that device.
 - `sync_key`: canonical object key under the S3 `systems/` prefix.
 
 `content_path` is what lets MiSTer and Thor be compared even though their local
-roots differ.
+roots and save extensions differ. For example, Thor `Golden Sun.srm` and MiSTer
+`Golden Sun.sav` both map to canonical `Golden Sun.sav`, while
+`native_content_path` preserves the real local filename to use during apply.
 
 ## Comparing Manifests
 
@@ -281,6 +286,19 @@ an accessible PSX folder, the converter tries to infer the game file:
 
 If the first disc cannot be inferred unambiguously, conversion stops and asks
 for `--retroarch-game-file`.
+
+For PSX names that differ between MiSTer and RetroArch/SwanStation, add a
+mapping under `save_mappings.psx`:
+
+```yaml
+save_mappings:
+  psx:
+    - mister_game_folder: "Final Fantasy 9 (FR)"
+      retroarch_game_file: "Final Fantasy IX.chd"
+```
+
+The extension may be omitted or unknown there too. The sync key remains based on
+`mister_game_folder`; Thor output uses the RetroArch stem.
 
 Names are compared case-insensitively for safety, but the source casing remains
 canonical. A case-only rename such as `pokemon.sav` -> `Pokemon.sav` is planned

@@ -25,6 +25,7 @@ class ObjectItem:
     absolute_path: str
     relative_path: str
     content_path: str
+    native_content_path: str
     sync_key: str
     size: int
     modified_ns: int
@@ -145,6 +146,7 @@ def _scan_object(root: Path, path: Path) -> ObjectItem | None:
         absolute_path=str(path),
         relative_path=relative_path,
         content_path=content_path,
+        native_content_path=content_path,
         sync_key=relative_path,
         size=stat.st_size,
         modified_ns=stat.st_mtime_ns,

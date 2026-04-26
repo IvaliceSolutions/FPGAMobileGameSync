@@ -138,6 +138,8 @@ def _normalise_item(item: dict[str, Any]) -> dict[str, Any]:
         if "relative_path" not in normalised:
             raise CompareError("manifest item needs content_path or relative_path")
         normalised["content_path"] = normalised["relative_path"]
+    if "native_content_path" not in normalised:
+        normalised["native_content_path"] = normalised["content_path"]
     return normalised
 
 

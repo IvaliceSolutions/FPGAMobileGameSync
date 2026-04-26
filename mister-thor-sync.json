@@ -147,6 +147,11 @@
     "s3_prefix_template": "backups/{timestamp_utc}/{origin_device}/",
     "local_prefix_template": "{trash_root}/backups/{timestamp_utc}/"
   },
+  "save_mappings": {
+    "psx": [
+
+    ]
+  },
   "exclusions": {
     "global": {
       "directories": [

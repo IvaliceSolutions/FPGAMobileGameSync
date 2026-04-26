@@ -33,6 +33,35 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(manifest["summary"]["skipped_count"], 1)
             self.assertEqual(manifest["skipped"][0]["reason"], "not_configured")
 
+    def test_scan_normalizes_thor_raw_save_extension_to_canonical_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            save_dir = root / "RetroArch" / "saves" / "GBA"
+            save_dir.mkdir(parents=True)
+            (save_dir / "Golden Sun.srm").write_bytes(b"save")
+
+            config = _config(root)
+            config["devices"]["thor"] = {"local": {"root": str(root)}}
+            config["systems"]["gba"]["paths"]["thor"] = {
+                "games": "RetroArch/games/GBA",
+                "saves": "RetroArch/saves/GBA",
+                "bios": [],
+                "thumbnails": None,
+            }
+            config["systems"]["gba"]["file_extensions"]["saves"]["thor"] = [".srm"]
+            config["systems"]["gba"]["save_conversion"] = {
+                "strategy": "raw_same_content",
+                "mister_to_thor": {"rename_extension_to": ".srm"},
+                "thor_to_mister": {"rename_extension_to": ".sav"},
+            }
+
+            manifest = scan(config=config, device="thor", systems=["gba"], types=["saves"])
+            item = manifest["items"][0]
+
+            self.assertEqual(item["native_content_path"], "Golden Sun.srm")
+            self.assertEqual(item["content_path"], "Golden Sun.sav")
+            self.assertEqual(item["sync_key"], "systems/gba/saves/Golden Sun.sav")
+
 
 def _config(root: Path) -> dict:
     return {

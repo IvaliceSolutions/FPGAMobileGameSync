@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .object_store import LocalObjectStore
+from .save_paths import is_convertible_save, native_save_content_path
 
 
 class ApplyError(Exception):
@@ -63,8 +64,11 @@ def apply_plan_to_local_target(
     trash_root: Path | None = None,
     timestamp_utc: str | None = None,
     allow_conflicts: bool = False,
+    config: dict[str, Any] | None = None,
+    target_device: str | None = None,
 ) -> dict[str, Any]:
     trash_base = trash_root or (target_root / ".sync_trash")
+    target_device = target_device or str(plan.get("target", "target"))
     applied: list[dict[str, Any]] = []
 
     for action in plan["actions"]:
@@ -76,6 +80,8 @@ def apply_plan_to_local_target(
                 origin_device=str(plan.get("source", "source")),
                 timestamp_utc=timestamp_utc,
                 allow_conflicts=allow_conflicts,
+                config=config,
+                target_device=target_device,
             )
         )
 
@@ -120,6 +126,8 @@ def _apply_local_action(
     origin_device: str,
     timestamp_utc: str | None,
     allow_conflicts: bool,
+    config: dict[str, Any] | None,
+    target_device: str,
 ) -> dict[str, Any]:
     operation = action["operation"]
 
@@ -130,9 +138,17 @@ def _apply_local_action(
             raise ApplyError("plan contains conflicts; refusing to apply")
         return {"operation": operation, "status": "skipped", "reason": action["reason"]}
     if operation == "download":
-        return _download(action, target_root, trash_root, origin_device, timestamp_utc)
+        return _download(
+            action,
+            target_root,
+            trash_root,
+            origin_device,
+            timestamp_utc,
+            config,
+            target_device,
+        )
     if operation == "rename_local":
-        return _rename_local(action, target_root)
+        return _rename_local(action, target_root, config, target_device)
     if operation == "trash_local":
         return _trash_local(action, target_root, trash_root, origin_device, timestamp_utc)
 
@@ -183,13 +199,15 @@ def _download(
     trash_root: Path,
     origin_device: str,
     timestamp_utc: str | None,
+    config: dict[str, Any] | None,
+    target_device: str,
 ) -> dict[str, Any]:
     source = action["source"]
     source_path = Path(source["absolute_path"])
     if not source_path.exists():
         raise ApplyError(f"source file not found: {source_path}")
 
-    target_path = _target_path_for_download(action, target_root)
+    target_path = _target_path_for_download(action, target_root, config, target_device)
     existing_target_path = _existing_target_path_for_download(action, target_root)
     backup_path = None
     if action.get("backup_target_before_apply") and existing_target_path.exists():
@@ -231,9 +249,22 @@ def _rename_remote(store: LocalObjectStore, action: dict[str, Any]) -> dict[str,
     }
 
 
-def _rename_local(action: dict[str, Any], target_root: Path) -> dict[str, Any]:
-    old_path = target_root / action["target"]["content_path"]
-    new_path = target_root / action["source"]["content_path"]
+def _rename_local(
+    action: dict[str, Any],
+    target_root: Path,
+    config: dict[str, Any] | None,
+    target_device: str,
+) -> dict[str, Any]:
+    old_path = target_root / action["target"].get(
+        "native_content_path",
+        action["target"]["content_path"],
+    )
+    new_path = _target_path_from_source(
+        action["source"],
+        target_root,
+        config,
+        target_device,
+    )
     if not old_path.exists():
         raise ApplyError(f"target file not found for rename: {old_path}")
     _rename_path_case_aware(old_path, new_path)
@@ -274,7 +305,7 @@ def _trash_local(
     timestamp_utc: str | None,
 ) -> dict[str, Any]:
     target = action["target"]
-    source_path = target_root / target["content_path"]
+    source_path = target_root / target.get("native_content_path", target["content_path"])
     if not source_path.exists():
         raise ApplyError(f"target file not found for trash: {source_path}")
     trash_path = _trash_path(
@@ -304,18 +335,69 @@ def _target_sync_key(action: dict[str, Any]) -> str:
     return action["source"]["sync_key"]
 
 
-def _target_path_for_download(action: dict[str, Any], target_root: Path) -> Path:
+def _target_path_for_download(
+    action: dict[str, Any],
+    target_root: Path,
+    config: dict[str, Any] | None,
+    target_device: str,
+) -> Path:
+    source = action["source"]
+    if _use_native_save_path(source, config, target_device):
+        return target_root / native_save_content_path(
+            config=config or {},
+            system=source["system"],
+            device=target_device,
+            canonical_content_path=source["content_path"],
+        )
     if action.get("rename_target_before_copy"):
         return target_root / action["source"]["content_path"]
     if "target" in action:
-        return target_root / action["target"]["content_path"]
+        return target_root / action["target"].get(
+            "native_content_path",
+            action["target"]["content_path"],
+        )
     return target_root / action["source"]["content_path"]
+
+
+def _target_path_from_source(
+    source: dict[str, Any],
+    target_root: Path,
+    config: dict[str, Any] | None,
+    target_device: str,
+) -> Path:
+    if _use_native_save_path(source, config, target_device):
+        return target_root / native_save_content_path(
+            config=config or {},
+            system=source["system"],
+            device=target_device,
+            canonical_content_path=source["content_path"],
+        )
+    return target_root / source["content_path"]
 
 
 def _existing_target_path_for_download(action: dict[str, Any], target_root: Path) -> Path:
     if "target" in action:
-        return target_root / action["target"]["content_path"]
+        return target_root / action["target"].get(
+            "native_content_path",
+            action["target"]["content_path"],
+        )
     return target_root / action["source"]["content_path"]
+
+
+def _use_native_save_path(
+    item: dict[str, Any],
+    config: dict[str, Any] | None,
+    target_device: str,
+) -> bool:
+    if config is None:
+        return False
+    if target_device not in config.get("devices", {}):
+        return False
+    return is_convertible_save(
+        config=config,
+        system=item["system"],
+        content_type=item["type"],
+    )
 
 
 def _rename_path_case_aware(old_path: Path, new_path: Path) -> None:

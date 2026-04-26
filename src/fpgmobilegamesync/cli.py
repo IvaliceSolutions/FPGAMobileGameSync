@@ -308,6 +308,7 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.write("\n")
             return 0
         if args.command == "apply":
+            config = load_config(Path(args.config))
             plan = load_plan(Path(args.plan))
             if plan.get("mode") == "download" or args.target_root:
                 if not args.target_root:
@@ -318,6 +319,8 @@ def main(argv: list[str] | None = None) -> int:
                     trash_root=Path(args.trash_root) if args.trash_root else None,
                     timestamp_utc=args.timestamp_utc,
                     allow_conflicts=args.allow_conflicts,
+                    config=config,
+                    target_device=str(plan.get("target", "target")),
                 )
             else:
                 if not args.store_root:
