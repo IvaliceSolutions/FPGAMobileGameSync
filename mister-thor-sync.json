@@ -1,0 +1,439 @@
+{
+  "version": 1,
+  "defaults": {
+    "systems": [
+      "gba",
+      "snes",
+      "psx"
+    ],
+    "types": [
+      "games",
+      "saves",
+      "bios",
+      "thumbnails"
+    ],
+    "dry_run_by_default": true,
+    "require_confirmation_for": [
+      "delete",
+      "trash",
+      "overwrite",
+      "conflict_resolution"
+    ]
+  },
+  "s3": {
+    "provider": "garage",
+    "bucket": "mister-thor-sync",
+    "endpoint_url_env": "MISTER_THOR_S3_ENDPOINT_URL",
+    "access_key_id_env": "MISTER_THOR_S3_ACCESS_KEY_ID",
+    "secret_access_key_env": "MISTER_THOR_S3_SECRET_ACCESS_KEY",
+    "region": "garage",
+    "prefix": "",
+    "layout": {
+      "systems": "systems",
+      "manifests": "manifests",
+      "trash": "trash",
+      "backups": "backups"
+    }
+  },
+  "devices": {
+    "mister": {
+      "kind": "mister",
+      "local": {
+        "root": "/media/fat",
+        "trash": "/media/fat/.sync_trash"
+      },
+      "remote": {
+        "protocol": "sftp",
+        "host": "mister.local",
+        "port": 22,
+        "username_env": "MISTER_SYNC_SFTP_USER",
+        "password_env": "MISTER_SYNC_SFTP_PASSWORD",
+        "private_key_env": "MISTER_SYNC_SFTP_PRIVATE_KEY",
+        "root": "/media/fat",
+        "trash": "/media/fat/.sync_trash"
+      }
+    },
+    "thor": {
+      "kind": "android",
+      "local": {
+        "root": "/storage/emulated/0",
+        "trash": "/storage/emulated/0/RetroArch/.sync_trash"
+      },
+      "remote": {
+        "protocol": "sftp",
+        "host": "thor.local",
+        "port": 2222,
+        "username_env": "THOR_SYNC_SFTP_USER",
+        "password_env": "THOR_SYNC_SFTP_PASSWORD",
+        "private_key_env": "THOR_SYNC_SFTP_PRIVATE_KEY",
+        "root": "/storage/emulated/0",
+        "trash": "/storage/emulated/0/RetroArch/.sync_trash"
+      }
+    }
+  },
+  "sync_modes": {
+    "mister-to-thor": {
+      "source": "mister",
+      "target": "thor",
+      "stages": [
+        "compare_source_with_s3",
+        "upload_source_changes_to_s3",
+        "compare_s3_with_target",
+        "download_s3_changes_to_target"
+      ]
+    },
+    "thor-to-mister": {
+      "source": "thor",
+      "target": "mister",
+      "stages": [
+        "compare_source_with_s3",
+        "upload_source_changes_to_s3",
+        "compare_s3_with_target",
+        "download_s3_changes_to_target"
+      ]
+    }
+  },
+  "identity": {
+    "file_id": "{type}/{system}/sha256:{sha256}",
+    "path_is_identity": false,
+    "hash_algorithm": "sha256",
+    "detect_renames": true,
+    "detect_moves": true,
+    "detect_folder_renames": true,
+    "folder_grouping": {
+      "psx": {
+        "enabled": true,
+        "group_root": "game_directory",
+        "group_id": "hash_of_child_paths_and_hashes"
+      },
+      "gba": {
+        "enabled": false
+      },
+      "snes": {
+        "enabled": false
+      }
+    }
+  },
+  "comparison": {
+    "upload": {
+      "first_compare": "source_with_s3",
+      "then_apply": "source_to_s3"
+    },
+    "download": {
+      "first_compare": "s3_with_target",
+      "then_apply": "s3_to_target"
+    },
+    "conflict_policy": "stop",
+    "same_hash_different_path": "rename_or_move",
+    "same_path_different_hash": "modified",
+    "both_sides_changed": "conflict",
+    "missing_from_source": "trash_remote_after_rename_detection",
+    "missing_from_remote": "upload",
+    "missing_from_target": "download"
+  },
+  "trash": {
+    "enabled": true,
+    "never_hard_delete_by_default": true,
+    "retention_days": 90,
+    "purge_requires_explicit_command": true,
+    "s3_prefix_template": "trash/{timestamp_utc}/{origin_device}/",
+    "local_prefix_template": "{trash_root}/{timestamp_utc}/",
+    "include_trash_manifest": true
+  },
+  "backups": {
+    "enabled": true,
+    "before_overwrite": true,
+    "before_delete_or_trash": true,
+    "s3_prefix_template": "backups/{timestamp_utc}/{origin_device}/",
+    "local_prefix_template": "{trash_root}/backups/{timestamp_utc}/"
+  },
+  "exclusions": {
+    "global": {
+      "directories": [
+        "savestates",
+        "states",
+        "screenshots",
+        "logs",
+        "temp",
+        "config",
+        "playlists",
+        "cheats"
+      ],
+      "filename_patterns": [
+        ".DS_Store",
+        "Thumbs.db",
+        "*.tmp",
+        "*.part",
+        "*.state",
+        "*.state*"
+      ]
+    }
+  },
+  "systems": {
+    "gba": {
+      "display_name": "Game Boy Advance",
+      "s3": {
+        "games": "systems/gba/games",
+        "saves": "systems/gba/saves",
+        "bios": "systems/gba/bios",
+        "thumbnails": "systems/gba/thumbnails"
+      },
+      "paths": {
+        "mister": {
+          "games": "games/GBA",
+          "saves": "saves/GBA",
+          "bios": [
+            "games/GBA/boot.rom"
+          ],
+          "thumbnails": null
+        },
+        "thor": {
+          "games": "RetroArch/games/GBA",
+          "saves": "RetroArch/saves/GBA",
+          "bios": [
+            "RetroArch/system/gba_bios.bin"
+          ],
+          "thumbnails": "RetroArch/thumbnails/Game Boy Advance"
+        }
+      },
+      "file_extensions": {
+        "games": [
+          ".gba",
+          ".zip",
+          ".7z"
+        ],
+        "saves": {
+          "mister": [
+            ".sav"
+          ],
+          "thor": [
+            ".srm",
+            ".sav"
+          ]
+        },
+        "bios": [
+          ".rom",
+          ".bin"
+        ],
+        "thumbnails": [
+          ".png",
+          ".jpg",
+          ".jpeg"
+        ]
+      },
+      "save_conversion": {
+        "strategy": "raw_same_content",
+        "mister_to_thor": {
+          "rename_extension_from": ".sav",
+          "rename_extension_to": ".srm",
+          "validate_sizes": [
+            512,
+            8192,
+            32768,
+            65536,
+            131072
+          ]
+        },
+        "thor_to_mister": {
+          "rename_extension_from": [
+            ".srm",
+            ".sav"
+          ],
+          "rename_extension_to": ".sav",
+          "validate_sizes": [
+            512,
+            8192,
+            32768,
+            65536,
+            131072
+          ]
+        }
+      },
+      "bios_mapping": [
+        {
+          "logical_name": "gba_bios",
+          "s3_key": "systems/gba/bios/gba_bios.bin",
+          "mister_path": "games/GBA/boot.rom",
+          "thor_path": "RetroArch/system/gba_bios.bin"
+        }
+      ]
+    },
+    "snes": {
+      "display_name": "Super Nintendo Entertainment System",
+      "s3": {
+        "games": "systems/snes/games",
+        "saves": "systems/snes/saves",
+        "bios": "systems/snes/bios",
+        "thumbnails": "systems/snes/thumbnails"
+      },
+      "paths": {
+        "mister": {
+          "games": "games/SNES",
+          "saves": "saves/SNES",
+          "bios": [
+            "games/SNES/bsx_bios.rom"
+          ],
+          "thumbnails": null
+        },
+        "thor": {
+          "games": "RetroArch/games/SNES",
+          "saves": "RetroArch/saves/SNES",
+          "bios": [
+            "RetroArch/system/BS-X.bin"
+          ],
+          "thumbnails": "RetroArch/thumbnails/Nintendo - Super Nintendo Entertainment System"
+        }
+      },
+      "file_extensions": {
+        "games": [
+          ".sfc",
+          ".smc",
+          ".fig",
+          ".zip",
+          ".7z"
+        ],
+        "saves": {
+          "mister": [
+            ".srm"
+          ],
+          "thor": [
+            ".srm"
+          ]
+        },
+        "bios": [
+          ".rom",
+          ".bin"
+        ],
+        "thumbnails": [
+          ".png",
+          ".jpg",
+          ".jpeg"
+        ]
+      },
+      "save_conversion": {
+        "strategy": "none",
+        "extension": ".srm"
+      },
+      "bios_mapping": [
+        {
+          "logical_name": "satellaview_bios",
+          "s3_key": "systems/snes/bios/bsx_bios.rom",
+          "mister_path": "games/SNES/bsx_bios.rom",
+          "thor_path": "RetroArch/system/BS-X.bin"
+        }
+      ]
+    },
+    "psx": {
+      "display_name": "Sony PlayStation",
+      "s3": {
+        "games": "systems/psx/games",
+        "saves": "systems/psx/saves",
+        "bios": "systems/psx/bios",
+        "thumbnails": "systems/psx/thumbnails"
+      },
+      "paths": {
+        "mister": {
+          "games": "games/PSX",
+          "saves": "saves/PSX",
+          "bios": [
+            "games/PSX/boot.rom",
+            "games/PSX/boot1.rom",
+            "games/PSX/boot2.rom"
+          ],
+          "thumbnails": null
+        },
+        "thor": {
+          "games": "RetroArch/games/PSX",
+          "saves": "RetroArch/saves/PSX",
+          "bios": [
+            "RetroArch/system/scph5500.bin",
+            "RetroArch/system/scph5501.bin",
+            "RetroArch/system/scph5502.bin"
+          ],
+          "thumbnails": "RetroArch/thumbnails/Sony - PlayStation"
+        }
+      },
+      "file_extensions": {
+        "games": [
+          ".cue",
+          ".bin",
+          ".chd",
+          ".m3u",
+          ".pbp"
+        ],
+        "saves": {
+          "mister": [
+            ".sav",
+            ".mcd"
+          ],
+          "thor": [
+            ".srm",
+            ".mcr",
+            ".mcd"
+          ]
+        },
+        "bios": [
+          ".rom",
+          ".bin"
+        ],
+        "thumbnails": [
+          ".png",
+          ".jpg",
+          ".jpeg"
+        ]
+      },
+      "save_conversion": {
+        "strategy": "psx_raw_memory_card",
+        "expected_raw_card_size": 131072,
+        "mister_to_thor": {
+          "accepted_input_extensions": [
+            ".sav",
+            ".mcd"
+          ],
+          "output_extension": ".srm",
+          "validate_raw_card_size": true
+        },
+        "thor_to_mister": {
+          "accepted_input_extensions": [
+            ".srm",
+            ".mcr",
+            ".mcd"
+          ],
+          "output_extension": ".sav",
+          "validate_raw_card_size": true
+        }
+      },
+      "bios_mapping": [
+        {
+          "logical_name": "psx_japan_bios",
+          "s3_key": "systems/psx/bios/scph5500.bin",
+          "mister_path": "games/PSX/boot.rom",
+          "thor_path": "RetroArch/system/scph5500.bin"
+        },
+        {
+          "logical_name": "psx_usa_bios",
+          "s3_key": "systems/psx/bios/scph5501.bin",
+          "mister_path": "games/PSX/boot1.rom",
+          "thor_path": "RetroArch/system/scph5501.bin"
+        },
+        {
+          "logical_name": "psx_europe_bios",
+          "s3_key": "systems/psx/bios/scph5502.bin",
+          "mister_path": "games/PSX/boot2.rom",
+          "thor_path": "RetroArch/system/scph5502.bin"
+        }
+      ]
+    }
+  },
+  "commands": {
+    "examples": [
+      "sync plan mister-to-thor --systems gba,snes,psx --types games,saves,bios,thumbnails",
+      "sync apply mister-to-thor",
+      "sync plan thor-to-mister --systems gba,snes,psx --types saves",
+      "sync apply thor-to-mister",
+      "sync trash list",
+      "sync trash restore systems/snes/games/Chrono Trigger.sfc",
+      "sync trash purge --older-than 90d"
+    ]
+  }
+}

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fpgamobilegamesync"
+version = "0.1.0"
+description = "Manual MiSTer FPGA and Android RetroArch sync tooling."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [
+  { name = "IvaliceSolutions", email = "jh@ivalice.eu" }
+]
+dependencies = []
+
+[project.optional-dependencies]
+yaml = ["PyYAML>=6"]
+s3 = ["boto3>=1.34"]
+
+[project.scripts]
+fpgms = "fpgmobilegamesync.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
