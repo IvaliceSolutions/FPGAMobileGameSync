@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -64,6 +65,25 @@ class S3ObjectStore:
         manifest["manifest_key"] = manifest_key
         return manifest
 
+    def scan_live(self) -> dict[str, Any]:
+        items = []
+        for entry in self._list_objects("systems/"):
+            sync_key = self._strip_prefix(entry["Key"])
+            item = self._scan_live_object(sync_key)
+            if item is not None:
+                items.append(item)
+        return {
+            "backend": "s3",
+            "device": "s3",
+            "items": sorted(items, key=lambda item: item["sync_key"]),
+            "skipped": [],
+            "summary": {
+                "item_count": len(items),
+                "skipped_count": 0,
+                "total_size": sum(item["size"] for item in items),
+            },
+        }
+
     def object_exists(self, sync_key: str) -> bool:
         try:
             self.client.head_object(Bucket=self.bucket, Key=self._remote_key(sync_key))
@@ -72,6 +92,41 @@ class S3ObjectStore:
             if _is_missing_object_error(exc):
                 return False
             raise ObjectStoreError(f"failed to stat S3 object {sync_key}: {exc}") from exc
+
+    def verify_object_fingerprint(self, sync_key: str, item: dict[str, Any], role: str) -> None:
+        expected_sha = item.get("native_sha256")
+        expected_size = item.get("native_size")
+        if expected_sha is None and expected_size is None:
+            return
+        data = self._get_object_bytes(sync_key)
+        actual_size = len(data)
+        if expected_size is not None and actual_size != int(expected_size):
+            raise ObjectStoreError(
+                f"{role} S3 object changed since plan: {sync_key}; "
+                f"size {actual_size} != expected {expected_size}"
+            )
+        if expected_sha is not None:
+            actual_sha = hashlib.sha256(data).hexdigest()
+            if actual_sha != expected_sha:
+                raise ObjectStoreError(
+                    f"{role} S3 object changed since plan: {sync_key}; "
+                    f"sha256 {actual_sha} != expected {expected_sha}"
+                )
+
+    def put_file(self, source_path: Path, sync_key: str) -> None:
+        data = source_path.read_bytes()
+        try:
+            self.client.put_object(
+                Bucket=self.bucket,
+                Key=self._remote_key(sync_key),
+                Body=data,
+                Metadata={
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                    "size": str(len(data)),
+                },
+            )
+        except Exception as exc:
+            raise ObjectStoreError(f"failed to upload S3 object {sync_key}: {exc}") from exc
 
     def copy_object(self, from_sync_key: str, to_sync_key: str) -> None:
         source_key = self._remote_key(from_sync_key)
@@ -202,6 +257,44 @@ class S3ObjectStore:
                 break
             token = response.get("NextContinuationToken")
         return entries
+
+    def _get_object_bytes(self, sync_key: str) -> bytes:
+        try:
+            response = self.client.get_object(
+                Bucket=self.bucket,
+                Key=self._remote_key(sync_key),
+            )
+        except Exception as exc:
+            raise ObjectStoreError(f"failed to read S3 object {sync_key}: {exc}") from exc
+        try:
+            return _read_body(response["Body"])
+        except KeyError as exc:
+            raise ObjectStoreError(f"invalid S3 response for object {sync_key}") from exc
+
+    def _scan_live_object(self, sync_key: str) -> dict[str, Any] | None:
+        parts = Path(sync_key).parts
+        if len(parts) < 4 or parts[0] != "systems":
+            return None
+        data = self._get_object_bytes(sync_key)
+        sha256 = hashlib.sha256(data).hexdigest()
+        content_path = str(Path(*parts[3:]))
+        return {
+            "device": "s3",
+            "system": parts[1],
+            "type": parts[2],
+            "absolute_path": self._remote_key(sync_key),
+            "relative_path": sync_key,
+            "content_path": content_path,
+            "native_content_path": content_path,
+            "sync_key": sync_key,
+            "size": len(data),
+            "native_size": len(data),
+            "canonical_size": len(data),
+            "modified_ns": 0,
+            "sha256": sha256,
+            "native_sha256": sha256,
+            "canonical_sha256": sha256,
+        }
 
     def _remote_key(self, sync_key: str) -> str:
         sync_key = sync_key.strip("/")

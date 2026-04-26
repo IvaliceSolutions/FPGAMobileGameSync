@@ -12,6 +12,7 @@ from typing import Any
 
 from .converter import ConversionError, convert_save_file
 from .object_store import LocalObjectStore
+from .s3_store import S3ObjectStore
 from .save_paths import is_convertible_save, native_save_content_path
 
 
@@ -66,6 +67,42 @@ def apply_plan_to_local_store(
     }
 
 
+def apply_plan_to_s3_store(
+    plan: dict[str, Any],
+    config: dict[str, Any],
+    timestamp_utc: str | None = None,
+    allow_conflicts: bool = False,
+    source_device: str | None = None,
+    store: S3ObjectStore | None = None,
+) -> dict[str, Any]:
+    s3_store = store or S3ObjectStore.from_config(config)
+    source_device = source_device or str(plan.get("source", "source"))
+    applied: list[dict[str, Any]] = []
+
+    for action in plan["actions"]:
+        applied.append(
+            _apply_action(
+                store=s3_store,
+                action=action,
+                origin_device=source_device,
+                timestamp_utc=timestamp_utc,
+                allow_conflicts=allow_conflicts,
+                config=config,
+                source_device=source_device,
+            )
+        )
+
+    manifest = s3_store.scan_live()
+    s3_store.write_manifest(manifest)
+
+    return {
+        "backend": "s3",
+        "applied": applied,
+        "summary": _summary(applied),
+        "manifest_written": "manifests/s3.json",
+    }
+
+
 def apply_plan_to_local_target(
     plan: dict[str, Any],
     target_root: Path,
@@ -103,7 +140,7 @@ def apply_plan_to_local_target(
 
 
 def _apply_action(
-    store: LocalObjectStore,
+    store: LocalObjectStore | S3ObjectStore,
     action: dict[str, Any],
     origin_device: str,
     timestamp_utc: str | None,
@@ -166,7 +203,7 @@ def _apply_local_action(
 
 
 def _upload(
-    store: LocalObjectStore,
+    store: LocalObjectStore | S3ObjectStore,
     action: dict[str, Any],
     origin_device: str,
     timestamp_utc: str | None,
@@ -183,8 +220,9 @@ def _upload(
     existing_target_key = action.get("target", {}).get("sync_key", target_key)
     backup_key = None
     if "target" in action and store.object_exists(existing_target_key):
-        _verify_file_fingerprint(
-            store._object_path(existing_target_key),
+        _verify_store_object_fingerprint(
+            store,
+            existing_target_key,
             action["target"],
             role="target",
         )
@@ -288,14 +326,13 @@ def _download(
     return result
 
 
-def _rename_remote(store: LocalObjectStore, action: dict[str, Any]) -> dict[str, Any]:
+def _rename_remote(
+    store: LocalObjectStore | S3ObjectStore,
+    action: dict[str, Any],
+) -> dict[str, Any]:
     source_key = action["source"]["sync_key"]
     target_key = action["target"]["sync_key"]
-    _verify_file_fingerprint(
-        store._object_path(target_key),
-        action["target"],
-        role="target",
-    )
+    _verify_store_object_fingerprint(store, target_key, action["target"], role="target")
     store.rename_object(target_key, source_key)
     return {
         "operation": "rename_remote",
@@ -335,17 +372,13 @@ def _rename_local(
 
 
 def _trash_remote(
-    store: LocalObjectStore,
+    store: LocalObjectStore | S3ObjectStore,
     action: dict[str, Any],
     origin_device: str,
     timestamp_utc: str | None,
 ) -> dict[str, Any]:
     target_key = action["target"]["sync_key"]
-    _verify_file_fingerprint(
-        store._object_path(target_key),
-        action["target"],
-        role="target",
-    )
+    _verify_store_object_fingerprint(store, target_key, action["target"], role="target")
     trash_key = store.trash_object(
         target_key,
         origin_device=origin_device,
@@ -530,6 +563,18 @@ def _verify_file_fingerprint(path: Path, item: dict[str, Any], role: str) -> Non
                 f"{role} file changed since plan: {path}; "
                 f"sha256 {actual_sha} != expected {expected_sha}"
             )
+
+
+def _verify_store_object_fingerprint(
+    store: LocalObjectStore | S3ObjectStore,
+    sync_key: str,
+    item: dict[str, Any],
+    role: str,
+) -> None:
+    try:
+        store.verify_object_fingerprint(sync_key, item, role)
+    except Exception as exc:
+        raise ApplyError(str(exc)) from exc
 
 
 def _verify_conversion_fingerprint(

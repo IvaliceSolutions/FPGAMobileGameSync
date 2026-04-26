@@ -298,6 +298,24 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli store trash restore \
 As with the local backend, restore refuses to overwrite unless `--overwrite` is
 passed, and overwritten objects are copied under `backups/` first.
 
+Apply an upload/remote plan directly to Garage/S3:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli apply \
+  --plan upload-plan.json \
+  --backend s3 \
+  --pretty
+```
+
+This supports `upload`, `rename_remote`, `trash_remote`, `noop`, and refused or
+skipped `conflict` operations. Before overwriting, renaming, or trashing an
+existing object, the S3 backend re-reads the object and verifies the
+`native_sha256` / `native_size` stored in the plan. After applying, it rebuilds
+and writes `manifests/s3.json` from the current `systems/` objects.
+
+S3 apply currently handles source -> S3 plans. Applying S3 -> MiSTer/Thor
+download plans will use the local/SFTP target backend in a later step.
+
 ## Applying A Plan To The Local Object Store
 
 Apply a plan against the local object-store backend:

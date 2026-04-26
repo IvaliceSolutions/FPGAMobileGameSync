@@ -67,6 +67,9 @@ class LocalObjectStore:
     def object_exists(self, sync_key: str) -> bool:
         return self._object_path(sync_key).exists()
 
+    def verify_object_fingerprint(self, sync_key: str, item: dict[str, Any], role: str) -> None:
+        _verify_file_fingerprint(self._object_path(sync_key), item, role)
+
     def copy_object(self, from_sync_key: str, to_sync_key: str) -> None:
         source_path = self._object_path(from_sync_key)
         if not source_path.exists():
@@ -281,6 +284,26 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _verify_file_fingerprint(path: Path, item: dict[str, Any], role: str) -> None:
+    expected_sha = item.get("native_sha256")
+    expected_size = item.get("native_size")
+    if expected_sha is None and expected_size is None:
+        return
+    actual_size = path.stat().st_size
+    if expected_size is not None and actual_size != int(expected_size):
+        raise ObjectStoreError(
+            f"{role} object changed since plan: {path}; "
+            f"size {actual_size} != expected {expected_size}"
+        )
+    if expected_sha is not None:
+        actual_sha = _sha256(path)
+        if actual_sha != expected_sha:
+            raise ObjectStoreError(
+                f"{role} object changed since plan: {path}; "
+                f"sha256 {actual_sha} != expected {expected_sha}"
+            )
 
 
 def _same_filesystem_entry(source_path: Path, target_path: Path) -> bool:

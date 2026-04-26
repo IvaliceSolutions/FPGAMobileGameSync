@@ -19,6 +19,7 @@ from .converter import (
 )
 from .executor import (
     ApplyError,
+    apply_plan_to_s3_store,
     apply_plan_to_local_store,
     apply_plan_to_local_target,
     load_plan,
@@ -231,7 +232,7 @@ def build_parser() -> argparse.ArgumentParser:
     apply_parser.add_argument(
         "--backend",
         required=True,
-        choices=("local",),
+        choices=("local", "s3"),
         help="Backend to apply against.",
     )
     apply_parser.add_argument(
@@ -486,7 +487,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "apply":
             config = load_config(Path(args.config))
             plan = load_plan(Path(args.plan))
-            if plan.get("mode") == "download" or args.target_root:
+            if args.backend == "s3":
+                if plan.get("mode") == "download":
+                    raise ApplyError(
+                        "S3 apply currently supports upload/remote plans only; "
+                        "download apply still needs a local target backend"
+                    )
+                result = apply_plan_to_s3_store(
+                    plan=plan,
+                    config=config,
+                    timestamp_utc=args.timestamp_utc,
+                    allow_conflicts=args.allow_conflicts,
+                    source_device=str(plan.get("source", "source")),
+                )
+            elif args.backend == "local" and (plan.get("mode") == "download" or args.target_root):
                 if not args.target_root:
                     raise ApplyError("--target-root is required for local target apply")
                 result = apply_plan_to_local_target(
@@ -498,7 +512,7 @@ def main(argv: list[str] | None = None) -> int:
                     config=config,
                     target_device=str(plan.get("target", "target")),
                 )
-            else:
+            elif args.backend == "local":
                 if not args.store_root:
                     raise ApplyError("--store-root is required for local object-store apply")
                 result = apply_plan_to_local_store(
@@ -509,6 +523,8 @@ def main(argv: list[str] | None = None) -> int:
                     config=config,
                     source_device=str(plan.get("source", "source")),
                 )
+            else:
+                raise ApplyError(f"unsupported apply backend: {args.backend}")
             json.dump(
                 result,
                 sys.stdout,
