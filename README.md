@@ -145,6 +145,42 @@ Trash objects are moved under:
 trash/<timestamp-utc>/<origin-device>/systems/...
 ```
 
+## Applying A Plan To The Local Object Store
+
+Apply a plan against the local object-store backend:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli apply \
+  --plan upload-plan.json \
+  --backend local \
+  --store-root /tmp/fpgms-store \
+  --pretty
+```
+
+The local backend currently supports remote-side operations:
+
+- `noop`
+- `upload`
+- `rename_remote`
+- `trash_remote`
+- `conflict`, which is refused unless `--allow-conflicts` is passed
+
+When an upload overwrites an existing object, the old object is copied under:
+
+```text
+backups/<timestamp-utc>/<origin-device>/systems/...
+```
+
+Trash and backup paths can be made deterministic for tests:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli apply \
+  --plan upload-plan.json \
+  --backend local \
+  --store-root /tmp/fpgms-store \
+  --timestamp-utc 2026-04-26T20-30-00Z
+```
+
 ## Runtime Notes
 
 YAML loading requires `PyYAML`. When it is not available, use the generated

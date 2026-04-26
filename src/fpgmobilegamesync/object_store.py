@@ -58,6 +58,9 @@ class LocalObjectStore:
         target_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_path, target_path)
 
+    def object_exists(self, sync_key: str) -> bool:
+        return self._object_path(sync_key).exists()
+
     def copy_object(self, from_sync_key: str, to_sync_key: str) -> None:
         source_path = self._object_path(from_sync_key)
         if not source_path.exists():
@@ -86,6 +89,17 @@ class LocalObjectStore:
         trash_key = f"trash/{timestamp}/{origin_device}/{sync_key}"
         self.rename_object(sync_key, trash_key)
         return trash_key
+
+    def backup_object(
+        self,
+        sync_key: str,
+        origin_device: str,
+        timestamp_utc: str | None = None,
+    ) -> str:
+        timestamp = timestamp_utc or _timestamp_utc()
+        backup_key = f"backups/{timestamp}/{origin_device}/{sync_key}"
+        self.copy_object(sync_key, backup_key)
+        return backup_key
 
     def write_manifest(self, manifest: dict[str, Any], key: str = "manifests/s3.json") -> None:
         target_path = self._object_path(key)

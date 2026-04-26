@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .compare import CompareError, compare_manifests, load_manifest
 from .config import ConfigError, load_config
+from .executor import ApplyError, apply_plan_to_local_store, load_plan
 from .object_store import LocalObjectStore, ObjectStoreError
 from .planner import PlanError, build_plan
 from .scanner import ScanError, scan
@@ -138,6 +139,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pretty-print JSON output.",
     )
 
+    apply_parser = subparsers.add_parser(
+        "apply",
+        help="Apply a plan. Currently supports remote operations on the local object-store backend.",
+    )
+    apply_parser.add_argument(
+        "--plan",
+        required=True,
+        help="Path to plan JSON.",
+    )
+    apply_parser.add_argument(
+        "--backend",
+        required=True,
+        choices=("local",),
+        help="Backend to apply against.",
+    )
+    apply_parser.add_argument(
+        "--store-root",
+        required=True,
+        help="Local object-store root directory.",
+    )
+    apply_parser.add_argument(
+        "--timestamp-utc",
+        help="Fixed UTC timestamp for deterministic trash/backup paths.",
+    )
+    apply_parser.add_argument(
+        "--allow-conflicts",
+        action="store_true",
+        help="Skip conflict actions instead of refusing the plan.",
+    )
+    apply_parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output.",
+    )
+
     return parser
 
 
@@ -203,7 +239,29 @@ def main(argv: list[str] | None = None) -> int:
             )
             sys.stdout.write("\n")
             return 0
-    except (CompareError, ConfigError, ObjectStoreError, PlanError, ScanError) as exc:
+        if args.command == "apply":
+            result = apply_plan_to_local_store(
+                plan=load_plan(Path(args.plan)),
+                store_root=Path(args.store_root),
+                timestamp_utc=args.timestamp_utc,
+                allow_conflicts=args.allow_conflicts,
+            )
+            json.dump(
+                result,
+                sys.stdout,
+                indent=2 if args.pretty else None,
+                sort_keys=True,
+            )
+            sys.stdout.write("\n")
+            return 0
+    except (
+        ApplyError,
+        CompareError,
+        ConfigError,
+        ObjectStoreError,
+        PlanError,
+        ScanError,
+    ) as exc:
         parser.exit(2, f"error: {exc}\n")
 
     parser.exit(2, "error: unknown command\n")
