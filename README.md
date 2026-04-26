@@ -379,6 +379,25 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli store trash restore \
 As with the local backend, restore refuses to overwrite unless `--overwrite` is
 passed, and overwritten objects are copied under `backups/` first.
 
+Inspect S3 sync locks if a previous `sync --backend s3 --apply` was interrupted:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli store lock list \
+  --backend s3 \
+  --pretty
+```
+
+An expired lock can be cleared directly. Use `--force` only after confirming no
+other controller is currently syncing:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli store lock clear \
+  --backend s3 \
+  --name sync \
+  --force \
+  --pretty
+```
+
 Apply an upload/remote plan directly to Garage/S3:
 
 ```sh

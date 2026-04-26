@@ -235,6 +235,52 @@ class S3ObjectStore:
         self.delete_object(lock_key)
         return {"status": "released", "sync_key": lock_key}
 
+    def list_locks(self, now_utc: datetime | None = None) -> dict[str, Any]:
+        now = now_utc or datetime.now(timezone.utc)
+        items = []
+        for entry in self._list_objects("locks/"):
+            sync_key = self._strip_prefix(entry["Key"])
+            lock = self._read_lock(sync_key)
+            if lock is None:
+                continue
+            items.append(_public_lock(lock, sync_key, now))
+        items = sorted(items, key=lambda item: item["sync_key"])
+        return {
+            "backend": "s3",
+            "bucket": self.bucket,
+            "prefix": self.prefix,
+            "items": items,
+            "summary": {
+                "item_count": len(items),
+                "active_count": sum(1 for item in items if not item["expired"]),
+                "expired_count": sum(1 for item in items if item["expired"]),
+            },
+        }
+
+    def clear_lock(
+        self,
+        name: str = "sync",
+        force: bool = False,
+        now_utc: datetime | None = None,
+    ) -> dict[str, Any]:
+        now = now_utc or datetime.now(timezone.utc)
+        lock_key = f"locks/{name}.json"
+        current = self._read_lock(lock_key)
+        if current is None:
+            return {"status": "missing", "sync_key": lock_key}
+        public_lock = _public_lock(current, lock_key, now)
+        if not force and not public_lock["expired"]:
+            raise ObjectStoreError(
+                f"S3 lock is still active: {lock_key}; pass --force to clear it"
+            )
+        self.delete_object(lock_key)
+        return {
+            "status": "cleared",
+            "sync_key": lock_key,
+            "lock": public_lock,
+            "forced": force,
+        }
+
     def list_trash(self) -> dict[str, Any]:
         items = []
         for entry in self._list_objects("trash/"):
@@ -530,3 +576,12 @@ def _parse_lock_time(value: Any) -> datetime | None:
         except ValueError:
             continue
     return None
+
+
+def _public_lock(lock: dict[str, Any], lock_key: str, now: datetime) -> dict[str, Any]:
+    public = {key: value for key, value in lock.items() if key != "token"}
+    public["sync_key"] = str(public.get("sync_key") or lock_key)
+    expires_at = _parse_lock_time(public.get("expires_at_utc"))
+    public["expired"] = expires_at is not None and expires_at <= now
+    public["expires_at_valid"] = expires_at is not None
+    return public

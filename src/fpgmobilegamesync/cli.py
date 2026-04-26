@@ -229,6 +229,54 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Pretty-print JSON output.",
     )
+    store_lock_parser = store_subparsers.add_parser(
+        "lock",
+        help="Inspect or clear S3 sync locks.",
+    )
+    store_lock_subparsers = store_lock_parser.add_subparsers(
+        dest="store_lock_command",
+        required=True,
+    )
+    store_lock_list_parser = store_lock_subparsers.add_parser(
+        "list",
+        help="List S3 sync locks.",
+    )
+    store_lock_list_parser.add_argument(
+        "--backend",
+        choices=("s3",),
+        default="s3",
+        help="Store backend to inspect. Lock maintenance is only available for S3.",
+    )
+    store_lock_list_parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output.",
+    )
+    store_lock_clear_parser = store_lock_subparsers.add_parser(
+        "clear",
+        help="Clear one S3 sync lock.",
+    )
+    store_lock_clear_parser.add_argument(
+        "--backend",
+        choices=("s3",),
+        default="s3",
+        help="Store backend to update. Lock maintenance is only available for S3.",
+    )
+    store_lock_clear_parser.add_argument(
+        "--name",
+        default="sync",
+        help="Lock name to clear. Defaults to sync.",
+    )
+    store_lock_clear_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Clear an active lock. Use only after verifying no sync is running.",
+    )
+    store_lock_clear_parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output.",
+    )
 
     apply_parser = subparsers.add_parser(
         "apply",
@@ -565,6 +613,25 @@ def main(argv: list[str] | None = None) -> int:
                 )
             else:
                 raise ObjectStoreError(f"unknown trash command: {args.store_trash_command}")
+            json.dump(
+                result,
+                sys.stdout,
+                indent=2 if args.pretty else None,
+                sort_keys=True,
+            )
+            sys.stdout.write("\n")
+            return 0
+        if args.command == "store" and args.store_command == "lock":
+            config = load_config(Path(args.config))
+            store = _store_from_args(args, config)
+            if not isinstance(store, S3ObjectStore):
+                raise ObjectStoreError("store lock commands require --backend s3")
+            if args.store_lock_command == "list":
+                result = store.list_locks()
+            elif args.store_lock_command == "clear":
+                result = store.clear_lock(name=args.name, force=args.force)
+            else:
+                raise ObjectStoreError(f"unknown lock command: {args.store_lock_command}")
             json.dump(
                 result,
                 sys.stdout,

@@ -190,6 +190,58 @@ class S3ObjectStoreTests(unittest.TestCase):
         with self.assertRaises(ObjectStoreError):
             store.release_lock(wrong_lock)
 
+    def test_list_locks_redacts_token_and_marks_expired(self) -> None:
+        client = FakeS3Client({})
+        store = S3ObjectStore(client=client, bucket="bucket", prefix="fp")
+        now = datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc)
+        store.acquire_lock(name="sync", owner="mister", ttl_seconds=60, now_utc=now)
+
+        listed = store.list_locks(now_utc=now + timedelta(seconds=61))
+
+        self.assertEqual(listed["summary"]["item_count"], 1)
+        self.assertEqual(listed["summary"]["expired_count"], 1)
+        self.assertEqual(listed["items"][0]["sync_key"], "locks/sync.json")
+        self.assertEqual(listed["items"][0]["owner"], "mister")
+        self.assertTrue(listed["items"][0]["expired"])
+        self.assertNotIn("token", listed["items"][0])
+
+    def test_clear_lock_refuses_active_lock_without_force(self) -> None:
+        client = FakeS3Client({})
+        store = S3ObjectStore(client=client, bucket="bucket")
+        now = datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc)
+        store.acquire_lock(name="sync", owner="mister", ttl_seconds=60, now_utc=now)
+
+        with self.assertRaises(ObjectStoreError):
+            store.clear_lock(name="sync", now_utc=now + timedelta(seconds=10))
+
+        self.assertIn("locks/sync.json", client.objects)
+
+    def test_clear_lock_removes_expired_or_forced_lock(self) -> None:
+        client = FakeS3Client({})
+        store = S3ObjectStore(client=client, bucket="bucket")
+        now = datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc)
+        store.acquire_lock(name="sync", owner="mister", ttl_seconds=1, now_utc=now)
+
+        expired_result = store.clear_lock(
+            name="sync",
+            now_utc=now + timedelta(seconds=2),
+        )
+
+        self.assertEqual(expired_result["status"], "cleared")
+        self.assertFalse(expired_result["forced"])
+        self.assertNotIn("locks/sync.json", client.objects)
+
+        store.acquire_lock(name="sync", owner="thor", ttl_seconds=60, now_utc=now)
+        forced_result = store.clear_lock(
+            name="sync",
+            force=True,
+            now_utc=now + timedelta(seconds=10),
+        )
+
+        self.assertEqual(forced_result["status"], "cleared")
+        self.assertTrue(forced_result["forced"])
+        self.assertNotIn("locks/sync.json", client.objects)
+
     def test_apply_upload_plan_to_s3_store(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
