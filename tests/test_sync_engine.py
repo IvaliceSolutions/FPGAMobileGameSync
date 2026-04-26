@@ -196,6 +196,80 @@ class SyncEngineTests(unittest.TestCase):
             summary = json.loads((report_dir / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["scan_backend"], "sftp")
 
+    def test_s3_sync_can_read_source_over_sftp_and_write_target_locally(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            thor_root = root / "thor"
+            report_dir = root / "reports" / "mixed-source-sftp"
+            (thor_root / "RetroArch/saves/GBA").mkdir(parents=True)
+            config = _remote_config()
+            config["devices"]["thor"]["local"]["root"] = str(thor_root)
+            config["devices"]["thor"]["local"]["trash"] = str(thor_root / "RetroArch/.sync_trash")
+            mister_client = FakeRemoteClient(
+                {
+                    "/media/fat/saves/GBA/Golden Sun.sav": b"save-data",
+                }
+            )
+            store = S3ObjectStore(client=FakeS3Client({}), bucket="bucket")
+
+            result = run_s3_sync(
+                config=config,
+                direction="mister-to-thor",
+                systems=["gba"],
+                types=["saves"],
+                apply=True,
+                timestamp_utc="2026-04-27T00-30-00Z",
+                report_dir=report_dir,
+                store=store,
+                source_scan_backend="sftp",
+                target_scan_backend="local",
+                sftp_clients={"mister": mister_client},
+            )
+
+            self.assertEqual(result["source_scan_backend"], "sftp")
+            self.assertEqual(result["target_scan_backend"], "local")
+            self.assertEqual(
+                (thor_root / "RetroArch/saves/GBA/Golden Sun.srm").read_bytes(),
+                b"save-data",
+            )
+            summary = json.loads((report_dir / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["source_scan_backend"], "sftp")
+            self.assertEqual(summary["target_scan_backend"], "local")
+
+    def test_s3_sync_can_read_source_locally_and_write_target_over_sftp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            thor_root = root / "thor"
+            report_dir = root / "reports" / "mixed-target-sftp"
+            (thor_root / "RetroArch/saves/GBA").mkdir(parents=True)
+            (thor_root / "RetroArch/saves/GBA/Golden Sun.srm").write_bytes(b"save-data")
+            config = _remote_config()
+            config["devices"]["thor"]["local"]["root"] = str(thor_root)
+            config["devices"]["thor"]["local"]["trash"] = str(thor_root / "RetroArch/.sync_trash")
+            mister_client = FakeRemoteClient({})
+            store = S3ObjectStore(client=FakeS3Client({}), bucket="bucket")
+
+            result = run_s3_sync(
+                config=config,
+                direction="thor-to-mister",
+                systems=["gba"],
+                types=["saves"],
+                apply=True,
+                timestamp_utc="2026-04-27T01-30-00Z",
+                report_dir=report_dir,
+                store=store,
+                source_scan_backend="local",
+                target_scan_backend="sftp",
+                sftp_clients={"mister": mister_client},
+            )
+
+            self.assertEqual(result["source_scan_backend"], "local")
+            self.assertEqual(result["target_scan_backend"], "sftp")
+            self.assertEqual(
+                mister_client.files["/media/fat/saves/GBA/Golden Sun.sav"],
+                b"save-data",
+            )
+
     def test_sftp_sync_applies_remote_backup_rename_and_trash(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             report_dir = Path(tmp) / "reports" / "sftp-actions"

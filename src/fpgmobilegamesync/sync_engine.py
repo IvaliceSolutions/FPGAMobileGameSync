@@ -154,10 +154,17 @@ def run_s3_sync(
     use_lock: bool = True,
     lock_ttl_seconds: int = 1800,
     lock_owner: str | None = None,
+    source_scan_backend: str | None = None,
+    target_scan_backend: str | None = None,
 ) -> dict[str, Any]:
     """Run source -> S3/Garage -> target sync on local or SFTP device roots."""
     if scan_backend not in {"local", "sftp"}:
         raise SyncError(f"unsupported sync scan backend: {scan_backend}")
+    source_backend = source_scan_backend or scan_backend
+    target_backend = target_scan_backend or scan_backend
+    for role, backend in (("source", source_backend), ("target", target_backend)):
+        if backend not in {"local", "sftp"}:
+            raise SyncError(f"unsupported {role} scan backend: {backend}")
 
     runtime_config = copy.deepcopy(config)
     source_device, target_device = _sync_devices(runtime_config, direction)
@@ -172,9 +179,17 @@ def run_s3_sync(
     lock = None
     lock_release = None
     try:
-        if scan_backend == "sftp":
+        sftp_devices = {
+            device
+            for device, backend in (
+                (source_device, source_backend),
+                (target_device, target_backend),
+            )
+            if backend == "sftp"
+        }
+        if sftp_devices:
             clients = dict(clients)
-            for device in (source_device, target_device):
+            for device in sorted(sftp_devices):
                 if device not in clients:
                     client = SftpDeviceClient.from_config(runtime_config, device)
                     clients[device] = client
@@ -193,7 +208,7 @@ def run_s3_sync(
                 device=source_device,
                 systems=systems,
                 types=types,
-                scan_backend=scan_backend,
+                scan_backend=source_backend,
                 sftp_client=clients.get(source_device),
             )
             store_manifest_before = s3_store.scan()
@@ -207,7 +222,7 @@ def run_s3_sync(
 
             upload_apply = None
             if apply:
-                if scan_backend == "sftp":
+                if source_backend == "sftp":
                     upload_apply = apply_plan_from_sftp_to_s3_store(
                         plan=upload_plan,
                         config=runtime_config,
@@ -233,7 +248,7 @@ def run_s3_sync(
                 device=target_device,
                 systems=systems,
                 types=types,
-                scan_backend=scan_backend,
+                scan_backend=target_backend,
                 sftp_client=clients.get(target_device),
             )
             download_plan = build_plan(
@@ -246,7 +261,7 @@ def run_s3_sync(
 
             download_apply = None
             if apply:
-                if scan_backend == "sftp":
+                if target_backend == "sftp":
                     download_apply = _apply_s3_download_plan_to_sftp_device(
                         config=runtime_config,
                         plan=download_plan,
@@ -275,6 +290,8 @@ def run_s3_sync(
     result = {
         "backend": "s3",
         "scan_backend": scan_backend,
+        "source_scan_backend": source_backend,
+        "target_scan_backend": target_backend,
         "direction": direction,
         "dry_run": not apply,
         "source_device": source_device,
@@ -621,6 +638,10 @@ def _summary_report(result: dict[str, Any]) -> dict[str, Any]:
     }
     if "scan_backend" in result:
         summary["scan_backend"] = result["scan_backend"]
+    if "source_scan_backend" in result:
+        summary["source_scan_backend"] = result["source_scan_backend"]
+    if "target_scan_backend" in result:
+        summary["target_scan_backend"] = result["target_scan_backend"]
     if "store_root" in result:
         summary["store_root"] = result["store_root"]
     if "store" in result:

@@ -250,6 +250,43 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
   --pretty
 ```
 
+When running directly on one of the two devices, use a mixed backend: `local`
+for the controller device and `sftp` for the other one.
+
+From the Thor, pull MiSTer changes into the local Thor filesystem:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
+  --direction mister-to-thor \
+  --backend s3 \
+  --source-backend sftp \
+  --target-backend local \
+  --report-dir /tmp/fpgms-runs/mister-to-thor-from-thor \
+  --system gba \
+  --type saves \
+  --apply \
+  --pretty
+```
+
+From the Thor, push local Thor changes back to MiSTer:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
+  --direction thor-to-mister \
+  --backend s3 \
+  --source-backend local \
+  --target-backend sftp \
+  --report-dir /tmp/fpgms-runs/thor-to-mister-from-thor \
+  --system gba \
+  --type saves \
+  --apply \
+  --pretty
+```
+
+Use the opposite pairing when running on MiSTer: `--source-backend local
+--target-backend sftp` for `mister-to-thor`, and `--source-backend sftp
+--target-backend local` for `thor-to-mister`.
+
 For development, mounted shares, or a third controller device, override the
 configured source and target roots:
 

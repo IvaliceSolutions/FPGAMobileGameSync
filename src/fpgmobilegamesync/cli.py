@@ -462,6 +462,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Device scan/apply backend for sync. Use sftp from a third controller device.",
     )
     sync_parser.add_argument(
+        "--source-backend",
+        choices=("local", "sftp"),
+        help="Override scan/apply backend for the source device.",
+    )
+    sync_parser.add_argument(
+        "--target-backend",
+        choices=("local", "sftp"),
+        help="Override scan/apply backend for the target device.",
+    )
+    sync_parser.add_argument(
         "--store-root",
         help="Local object-store root directory. Required for --backend local.",
     )
@@ -781,9 +791,11 @@ def main(argv: list[str] | None = None) -> int:
             return 1 if result["status"] == "error" else 0
         if args.command == "sync":
             config = load_config(Path(args.config))
+            source_backend = args.source_backend or args.scan_backend
+            target_backend = args.target_backend or args.scan_backend
             if args.backend == "local":
-                if args.scan_backend != "local":
-                    raise SyncError("--scan-backend sftp requires --backend s3")
+                if source_backend != "local" or target_backend != "local":
+                    raise SyncError("SFTP device backends require --backend s3")
                 if not args.store_root:
                     raise SyncError("--store-root is required for local sync")
                 result = run_local_sync(
@@ -815,6 +827,8 @@ def main(argv: list[str] | None = None) -> int:
                     use_lock=not args.no_lock,
                     lock_ttl_seconds=args.lock_ttl_seconds,
                     lock_owner=args.lock_owner,
+                    source_scan_backend=source_backend,
+                    target_scan_backend=target_backend,
                 )
             else:
                 raise SyncError(f"unsupported sync backend: {args.backend}")
