@@ -373,6 +373,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Check S3 environment variables even when using the local backend.",
     )
     doctor_parser.add_argument(
+        "--check-remote",
+        action="store_true",
+        help="Check configured SFTP remote blocks and their environment variables.",
+    )
+    doctor_parser.add_argument(
         "--pretty",
         action="store_true",
         help="Pretty-print JSON output.",
@@ -658,6 +663,7 @@ def main(argv: list[str] | None = None) -> int:
                 backend=args.backend,
                 check_paths=args.check_paths,
                 check_env=args.check_env,
+                check_remote=args.check_remote,
             )
             json.dump(
                 result,

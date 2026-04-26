@@ -36,6 +36,58 @@ class DoctorTests(unittest.TestCase):
                 {"FPGMS_ENDPOINT", "FPGMS_KEY", "FPGMS_SECRET"},
             )
 
+    def test_doctor_reports_missing_sftp_remote_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(Path(tmp))
+            config["devices"]["mister"]["remote"] = _remote_config("mister")
+            config["devices"]["thor"]["remote"] = _remote_config("thor")
+
+            with patch.dict("os.environ", {}, clear=True):
+                result = run_doctor(config=config, check_remote=True)
+
+            self.assertEqual(result["status"], "error")
+            self.assertTrue(result["remote_checked"])
+            self.assertEqual(
+                {
+                    (check["context"]["device"], check["context"]["env"])
+                    for check in result["checks"]
+                    if check["code"] == "missing_sftp_username_env"
+                },
+                {("mister", "MISTER_USER"), ("thor", "THOR_USER")},
+            )
+            self.assertEqual(
+                {
+                    (check["context"]["device"], tuple(check["context"]["envs"]))
+                    for check in result["checks"]
+                    if check["code"] == "missing_sftp_auth_env"
+                },
+                {
+                    ("mister", ("MISTER_PASSWORD", "MISTER_PRIVATE_KEY")),
+                    ("thor", ("THOR_PASSWORD", "THOR_PRIVATE_KEY")),
+                },
+            )
+
+    def test_doctor_accepts_sftp_remote_environment_when_one_auth_method_is_set(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(Path(tmp))
+            config["devices"]["mister"]["remote"] = _remote_config("mister")
+            config["devices"]["thor"]["remote"] = _remote_config("thor")
+
+            with patch.dict(
+                "os.environ",
+                {
+                    "MISTER_USER": "root",
+                    "MISTER_PRIVATE_KEY": "/keys/mister",
+                    "THOR_USER": "android",
+                    "THOR_PASSWORD": "secret",
+                },
+                clear=True,
+            ):
+                result = run_doctor(config=config, check_remote=True)
+
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(result["summary"]["error"], 0)
+
     def test_doctor_path_check_warns_for_unmounted_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -130,6 +182,20 @@ def _config(root: Path) -> dict:
                 },
             }
         },
+    }
+
+
+def _remote_config(prefix: str) -> dict:
+    upper = prefix.upper()
+    return {
+        "protocol": "sftp",
+        "host": f"{prefix}.local",
+        "port": 22,
+        "username_env": f"{upper}_USER",
+        "password_env": f"{upper}_PASSWORD",
+        "private_key_env": f"{upper}_PRIVATE_KEY",
+        "root": "/remote/root",
+        "trash": "/remote/root/.sync_trash",
     }
 
 

@@ -59,6 +59,16 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli --config mister-thor-sync.json d
   --pretty
 ```
 
+Add `--check-remote` before using the configured SFTP access from a third
+controller device:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli --config mister-thor-sync.json doctor \
+  --backend s3 \
+  --check-remote \
+  --pretty
+```
+
 To scan one system/type:
 
 ```sh

@@ -28,6 +28,7 @@ def run_doctor(
     backend: str = "local",
     check_paths: bool = False,
     check_env: bool = False,
+    check_remote: bool = False,
 ) -> dict[str, Any]:
     if backend not in {"local", "s3"}:
         raise DoctorError(f"unsupported doctor backend: {backend}")
@@ -43,6 +44,8 @@ def run_doctor(
     _check_sync_modes(config, checks)
     if backend == "s3" or check_env:
         _check_s3(config, checks)
+    if check_remote:
+        _check_remote_devices(config, selected_devices, checks)
 
     summary = _summary(checks)
     return {
@@ -51,6 +54,7 @@ def run_doctor(
         "devices": selected_devices,
         "systems": selected_systems,
         "types": selected_types,
+        "remote_checked": check_remote,
         "checks": [asdict(check) for check in checks],
         "summary": summary,
     }
@@ -341,6 +345,155 @@ def _check_s3(config: dict[str, Any], checks: list[DoctorCheck]) -> None:
                     {"env": value},
                 )
             )
+
+
+def _check_remote_devices(
+    config: dict[str, Any],
+    devices: list[str],
+    checks: list[DoctorCheck],
+) -> None:
+    configured_devices = config.get("devices", {})
+    if not isinstance(configured_devices, dict):
+        return
+    for device in devices:
+        device_config = configured_devices.get(device)
+        if not isinstance(device_config, dict):
+            continue
+        remote = device_config.get("remote")
+        if not isinstance(remote, dict):
+            checks.append(
+                DoctorCheck(
+                    "error",
+                    "missing_device_remote",
+                    f"device has no remote configuration: {device}",
+                    {"device": device},
+                )
+            )
+            continue
+        protocol = remote.get("protocol")
+        if protocol != "sftp":
+            checks.append(
+                DoctorCheck(
+                    "error",
+                    "unsupported_remote_protocol",
+                    f"unsupported remote protocol for {device}: {protocol}",
+                    {"device": device, "protocol": protocol},
+                )
+            )
+        _check_remote_required_string(remote, "host", device, checks)
+        _check_remote_port(remote, device, checks)
+        _check_remote_required_string(remote, "root", device, checks)
+        _check_remote_required_string(remote, "trash", device, checks, severity="warning")
+        _check_remote_username(remote, device, checks)
+        _check_remote_auth(remote, device, checks)
+
+
+def _check_remote_required_string(
+    remote: dict[str, Any],
+    key: str,
+    device: str,
+    checks: list[DoctorCheck],
+    severity: str = "error",
+) -> None:
+    value = remote.get(key)
+    if not isinstance(value, str) or not value:
+        checks.append(
+            DoctorCheck(
+                severity,
+                f"missing_remote_{key}",
+                f"remote {key} missing for {device}",
+                {"device": device, "key": key},
+            )
+        )
+
+
+def _check_remote_port(
+    remote: dict[str, Any],
+    device: str,
+    checks: list[DoctorCheck],
+) -> None:
+    port = remote.get("port")
+    if not isinstance(port, int) or port < 1 or port > 65535:
+        checks.append(
+            DoctorCheck(
+                "error",
+                "invalid_remote_port",
+                f"invalid remote port for {device}: {port}",
+                {"device": device, "port": port},
+            )
+        )
+
+
+def _check_remote_username(
+    remote: dict[str, Any],
+    device: str,
+    checks: list[DoctorCheck],
+) -> None:
+    username = remote.get("username")
+    username_env = remote.get("username_env")
+    if isinstance(username, str) and username:
+        return
+    if not isinstance(username_env, str) or not username_env:
+        checks.append(
+            DoctorCheck(
+                "error",
+                "missing_sftp_username",
+                f"SFTP username or username_env missing for {device}",
+                {"device": device},
+            )
+        )
+        return
+    if not os.environ.get(username_env):
+        checks.append(
+            DoctorCheck(
+                "error",
+                "missing_sftp_username_env",
+                f"missing required SFTP username environment variable: {username_env}",
+                {"device": device, "env": username_env},
+            )
+        )
+
+
+def _check_remote_auth(
+    remote: dict[str, Any],
+    device: str,
+    checks: list[DoctorCheck],
+) -> None:
+    if _has_literal_auth(remote):
+        return
+
+    auth_envs = [
+        env_name
+        for key in ("password_env", "private_key_env")
+        if isinstance((env_name := remote.get(key)), str) and env_name
+    ]
+    if not auth_envs:
+        checks.append(
+            DoctorCheck(
+                "warning",
+                "missing_sftp_auth",
+                f"SFTP password/private key is not configured for {device}; SSH agent may still work",
+                {"device": device},
+            )
+        )
+        return
+    if not any(os.environ.get(env_name) for env_name in auth_envs):
+        checks.append(
+            DoctorCheck(
+                "error",
+                "missing_sftp_auth_env",
+                f"missing SFTP auth environment variable for {device}",
+                {"device": device, "envs": auth_envs},
+            )
+        )
+
+
+def _has_literal_auth(remote: dict[str, Any]) -> bool:
+    for key in ("password", "private_key"):
+        value = remote.get(key)
+        if isinstance(value, str) and value:
+            return True
+    return False
 
 
 def _device_root(config: dict[str, Any], device: str) -> Path | None:
