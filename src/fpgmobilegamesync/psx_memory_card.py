@@ -54,6 +54,18 @@ def canonical_psx_memory_card_bytes(path: Path) -> bytes:
     return data
 
 
+def canonical_psx_memory_card_bytes_from_data(data: bytes, name: str) -> bytes:
+    path = Path(name)
+    _require_raw_extension(path)
+    if len(data) != RAW_CARD_SIZE:
+        raise PsxMemoryCardError(
+            f"unsupported PSX memory card size for {path.name}: "
+            f"{len(data)}; expected {RAW_CARD_SIZE}"
+        )
+    _validate_raw_card(data, path)
+    return data
+
+
 def canonical_psx_memory_card_sha256(path: Path) -> str:
     return hashlib.sha256(canonical_psx_memory_card_bytes(path)).hexdigest()
 

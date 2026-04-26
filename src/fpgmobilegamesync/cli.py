@@ -28,8 +28,10 @@ from .executor import (
 )
 from .object_store import LocalObjectStore, ObjectStoreError
 from .planner import PlanError, build_plan
+from .remote_scanner import scan_remote
 from .s3_store import S3ObjectStore
 from .scanner import ScanError, scan
+from .sftp_client import SftpError
 from .sync_engine import SyncError, run_local_sync, run_s3_sync
 
 
@@ -47,6 +49,12 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     scan_parser = subparsers.add_parser("scan", help="Scan configured files.")
+    scan_parser.add_argument(
+        "--backend",
+        choices=("local", "sftp"),
+        default="local",
+        help="Scan backend. Local reads mounted paths; sftp reads the configured remote block.",
+    )
     scan_parser.add_argument(
         "--device",
         required=True,
@@ -457,12 +465,22 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "scan":
             config = load_config(Path(args.config))
-            manifest = scan(
-                config=config,
-                device=args.device,
-                systems=args.system,
-                types=args.type,
-            )
+            if args.backend == "local":
+                manifest = scan(
+                    config=config,
+                    device=args.device,
+                    systems=args.system,
+                    types=args.type,
+                )
+            elif args.backend == "sftp":
+                manifest = scan_remote(
+                    config=config,
+                    device=args.device,
+                    systems=args.system,
+                    types=args.type,
+                )
+            else:
+                raise ScanError(f"unsupported scan backend: {args.backend}")
             json.dump(
                 manifest,
                 sys.stdout,
@@ -723,6 +741,7 @@ def main(argv: list[str] | None = None) -> int:
         ObjectStoreError,
         PlanError,
         ScanError,
+        SftpError,
         SyncError,
     ) as exc:
         parser.exit(2, f"error: {exc}\n")

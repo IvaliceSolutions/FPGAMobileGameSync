@@ -75,6 +75,19 @@ To scan one system/type:
 PYTHONPATH=src python3 -m fpgmobilegamesync.cli --config mister-thor-sync.json scan --device thor --system gba --type saves
 ```
 
+To scan through the configured SFTP access instead of mounted local paths,
+install the optional dependency and switch the scan backend:
+
+```sh
+python3 -m pip install ".[sftp]"
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli --config mister-thor-sync.json scan \
+  --backend sftp \
+  --device mister \
+  --system gba \
+  --type saves \
+  --pretty
+```
+
 The command prints a JSON manifest with paths, sizes, modification times, and
 SHA-256 hashes.
 
