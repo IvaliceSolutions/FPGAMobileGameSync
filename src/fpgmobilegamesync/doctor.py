@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import asdict, dataclass
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,7 @@ def run_doctor(
     check_paths: bool = False,
     check_env: bool = False,
     check_remote: bool = False,
+    check_dependencies: bool = False,
 ) -> dict[str, Any]:
     if backend not in {"local", "s3"}:
         raise DoctorError(f"unsupported doctor backend: {backend}")
@@ -47,6 +49,8 @@ def run_doctor(
         _check_s3(config, checks)
     if check_remote:
         _check_remote_devices(config, selected_devices, checks)
+    if check_dependencies:
+        _check_python_dependencies(backend, check_remote, checks)
 
     summary = _summary(checks)
     return {
@@ -56,6 +60,7 @@ def run_doctor(
         "systems": selected_systems,
         "types": selected_types,
         "remote_checked": check_remote,
+        "dependencies_checked": check_dependencies,
         "checks": [asdict(check) for check in checks],
         "summary": summary,
     }
@@ -583,6 +588,58 @@ def _has_literal_auth(remote: dict[str, Any]) -> bool:
         if isinstance(value, str) and value:
             return True
     return False
+
+
+def _check_python_dependencies(
+    backend: str,
+    check_remote: bool,
+    checks: list[DoctorCheck],
+) -> None:
+    if backend == "s3":
+        _check_python_module(
+            module="boto3",
+            extra="s3",
+            purpose="Garage/S3 backend",
+            checks=checks,
+        )
+    if check_remote:
+        _check_python_module(
+            module="paramiko",
+            extra="sftp",
+            purpose="SFTP device access",
+            checks=checks,
+        )
+
+
+def _check_python_module(
+    module: str,
+    extra: str,
+    purpose: str,
+    checks: list[DoctorCheck],
+) -> None:
+    if find_spec(module) is not None:
+        checks.append(
+            DoctorCheck(
+                "info",
+                "python_dependency_available",
+                f"Python dependency available for {purpose}: {module}",
+                {"module": module, "extra": extra, "purpose": purpose},
+            )
+        )
+        return
+    checks.append(
+        DoctorCheck(
+            "error",
+            "missing_python_dependency",
+            f"missing Python dependency for {purpose}: {module}",
+            {
+                "module": module,
+                "extra": extra,
+                "purpose": purpose,
+                "install_hint": f"python3 -m pip install '.[{extra}]'",
+            },
+        )
+    )
 
 
 def _device_root(config: dict[str, Any], device: str) -> Path | None:

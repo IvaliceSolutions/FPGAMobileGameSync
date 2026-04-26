@@ -440,6 +440,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Check configured SFTP remote blocks and their environment variables.",
     )
     doctor_parser.add_argument(
+        "--check-dependencies",
+        action="store_true",
+        help="Check optional Python modules required by the selected backend and remote access.",
+    )
+    doctor_parser.add_argument(
         "--pretty",
         action="store_true",
         help="Pretty-print JSON output.",
@@ -914,6 +919,7 @@ def main(argv: list[str] | None = None) -> int:
                 check_paths=args.check_paths,
                 check_env=args.check_env,
                 check_remote=args.check_remote,
+                check_dependencies=args.check_dependencies,
             )
             json.dump(
                 result,

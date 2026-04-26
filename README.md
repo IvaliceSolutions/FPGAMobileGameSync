@@ -69,6 +69,18 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli --config mister-thor-sync.json d
   --pretty
 ```
 
+Add `--check-dependencies` to verify that optional Python modules required by
+the selected backend are installed. For example, this checks `boto3` for
+Garage/S3 and `paramiko` for SFTP:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli --config mister-thor-sync.json doctor \
+  --backend s3 \
+  --check-remote \
+  --check-dependencies \
+  --pretty
+```
+
 To scan one system/type:
 
 ```sh

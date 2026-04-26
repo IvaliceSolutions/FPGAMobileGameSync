@@ -132,6 +132,61 @@ class DoctorTests(unittest.TestCase):
                 },
             )
 
+    def test_doctor_reports_missing_optional_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(Path(tmp))
+            config["devices"]["mister"]["remote"] = _remote_config("mister")
+            config["devices"]["thor"]["remote"] = _remote_config("thor")
+
+            with patch("fpgmobilegamesync.doctor.find_spec", return_value=None):
+                result = run_doctor(
+                    config=config,
+                    backend="s3",
+                    check_remote=True,
+                    check_dependencies=True,
+                )
+
+            self.assertTrue(result["dependencies_checked"])
+            self.assertEqual(result["status"], "error")
+            self.assertEqual(
+                {
+                    check["context"]["module"]
+                    for check in result["checks"]
+                    if check["code"] == "missing_python_dependency"
+                },
+                {"boto3", "paramiko"},
+            )
+
+    def test_doctor_accepts_available_optional_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(Path(tmp))
+            config["devices"]["mister"]["remote"] = _remote_config("mister")
+
+            with patch("fpgmobilegamesync.doctor.find_spec", return_value=object()):
+                with patch.dict(
+                    "os.environ",
+                    {
+                        "MISTER_USER": "root",
+                        "MISTER_PRIVATE_KEY": "/keys/mister",
+                    },
+                    clear=True,
+                ):
+                    result = run_doctor(
+                        config=config,
+                        devices=["mister"],
+                        check_remote=True,
+                        check_dependencies=True,
+                    )
+
+            self.assertEqual(result["status"], "ok")
+            self.assertTrue(
+                any(
+                    check["code"] == "python_dependency_available"
+                    and check["context"]["module"] == "paramiko"
+                    for check in result["checks"]
+                )
+            )
+
     def test_cli_doctor_returns_non_zero_on_errors(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
