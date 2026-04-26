@@ -3,12 +3,62 @@
 from __future__ import annotations
 
 import shutil
+import re
 from pathlib import Path
 from typing import Any
 
 
 class ConversionError(Exception):
     """Raised when a save file cannot be converted safely."""
+
+
+PSX_GAME_EXTENSIONS = {".iso", ".bin", ".chd", ".cue", ".m3u"}
+
+
+def infer_psx_retroarch_game_file(game_folder: Path) -> dict[str, Any]:
+    if not game_folder.exists():
+        raise ConversionError(f"PSX game folder not found: {game_folder}")
+    if not game_folder.is_dir():
+        raise ConversionError(f"PSX game folder is not a directory: {game_folder}")
+
+    candidates = sorted(
+        [
+            path
+            for path in game_folder.iterdir()
+            if path.is_file() and path.suffix.lower() in PSX_GAME_EXTENSIONS
+        ],
+        key=lambda path: path.name.lower(),
+    )
+    if not candidates:
+        raise ConversionError(f"no PSX game files found in: {game_folder}")
+    if len(candidates) == 1:
+        return {
+            "strategy": "single_disc",
+            "path": str(candidates[0]),
+            "candidates": [str(path) for path in candidates],
+        }
+
+    for strategy, pattern in [
+        ("cd_space_1", re.compile(r"(?i)(?:^|[^a-z0-9])cd\s+0?1(?:[^a-z0-9]|$)")),
+        ("cd1", re.compile(r"(?i)(?:^|[^a-z0-9])cd0?1(?:[^a-z0-9]|$)")),
+        ("isolated_1", re.compile(r"(?i)(?:^|[^a-z0-9])0?1(?:[^a-z0-9]|$)")),
+    ]:
+        matches = [path for path in candidates if pattern.search(path.stem)]
+        if len(matches) == 1:
+            return {
+                "strategy": strategy,
+                "path": str(matches[0]),
+                "candidates": [str(path) for path in candidates],
+            }
+        if len(matches) > 1:
+            raise ConversionError(
+                f"ambiguous PSX first-disc match in {game_folder}: "
+                + ", ".join(path.name for path in matches)
+            )
+
+    raise ConversionError(
+        f"cannot infer first PSX disc in {game_folder}; provide --retroarch-game-file"
+    )
 
 
 def convert_save_file(

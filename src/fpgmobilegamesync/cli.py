@@ -9,7 +9,12 @@ from pathlib import Path
 
 from .compare import CompareError, compare_manifests, load_manifest
 from .config import ConfigError, load_config
-from .converter import ConversionError, convert_save_file, expected_output_suffix
+from .converter import (
+    ConversionError,
+    convert_save_file,
+    expected_output_suffix,
+    infer_psx_retroarch_game_file,
+)
 from .executor import (
     ApplyError,
     apply_plan_to_local_store,
@@ -333,6 +338,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "convert-save":
             config = load_config(Path(args.config))
             source_path = Path(args.source)
+            inferred_retroarch_game_file = _infer_retroarch_game_file(
+                system=args.system,
+                direction=args.direction,
+                mister_game_folder=args.mister_game_folder or args.game_folder,
+                retroarch_game_file=args.retroarch_game_file,
+            )
             output_path = _resolve_save_output_path(
                 config=config,
                 system=args.system,
@@ -343,7 +354,9 @@ def main(argv: list[str] | None = None) -> int:
                     output_stem=args.output_stem,
                     game_folder=args.game_folder,
                     mister_game_folder=args.mister_game_folder,
-                    retroarch_game_file=args.retroarch_game_file,
+                    retroarch_game_file=inferred_retroarch_game_file["path"]
+                    if inferred_retroarch_game_file
+                    else args.retroarch_game_file,
                     direction=args.direction,
                 ),
             )
@@ -355,7 +368,10 @@ def main(argv: list[str] | None = None) -> int:
                 output_path=output_path,
                 metadata=_save_metadata(
                     mister_game_folder=args.mister_game_folder or args.game_folder,
-                    retroarch_game_file=args.retroarch_game_file,
+                    retroarch_game_file=inferred_retroarch_game_file["path"]
+                    if inferred_retroarch_game_file
+                    else args.retroarch_game_file,
+                    retroarch_inference=inferred_retroarch_game_file,
                 ),
             )
             json.dump(
@@ -416,6 +432,7 @@ def _save_output_stem(
 def _save_metadata(
     mister_game_folder: str | None,
     retroarch_game_file: str | None,
+    retroarch_inference: dict | None = None,
 ) -> dict | None:
     metadata = {}
     if mister_game_folder:
@@ -423,7 +440,25 @@ def _save_metadata(
     if retroarch_game_file:
         metadata["retroarch_game_file"] = str(retroarch_game_file)
         metadata["retroarch_game_file_stem"] = Path(retroarch_game_file).stem
+    if retroarch_inference:
+        metadata["retroarch_game_file_inference"] = {
+            "strategy": retroarch_inference["strategy"],
+            "candidates": retroarch_inference["candidates"],
+        }
     return metadata or None
+
+
+def _infer_retroarch_game_file(
+    system: str,
+    direction: str,
+    mister_game_folder: str | None,
+    retroarch_game_file: str | None,
+) -> dict | None:
+    if retroarch_game_file or system != "psx" or direction != "mister-to-thor":
+        return None
+    if not mister_game_folder:
+        return None
+    return infer_psx_retroarch_game_file(Path(mister_game_folder))
 
 
 if __name__ == "__main__":

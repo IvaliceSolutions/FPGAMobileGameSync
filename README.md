@@ -266,6 +266,17 @@ This writes:
 /tmp/out/Final Fantasy IX.srm
 ```
 
+If `--retroarch-game-file` is not provided but `--mister-game-folder` points to
+an accessible PSX folder, the converter tries to infer the game file:
+
+1. If there is only one `.iso`, `.bin`, `.chd`, `.cue`, or `.m3u`, use it.
+2. Otherwise, look for `CD 1`.
+3. Then look for `CD1`.
+4. Finally, look for an isolated `1`.
+
+If the first disc cannot be inferred unambiguously, conversion stops and asks
+for `--retroarch-game-file`.
+
 The future sync engine will use these manifests to detect:
 
 - unchanged files

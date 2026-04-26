@@ -344,6 +344,11 @@ systems:
         mister_key: mister_game_folder
         thor_key: retroarch_game_file_stem
         thor_save_name_source: retroarch_game_file_stem
+        infer_retroarch_game_file_when_missing: true
+        first_disc_patterns:
+          - "CD 1"
+          - "CD1"
+          - "isolated 1"
       mister_to_thor:
         accepted_input_extensions:
           - .sav
