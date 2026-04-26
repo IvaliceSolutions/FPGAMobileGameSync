@@ -19,6 +19,7 @@ from .converter import (
 )
 from .executor import (
     ApplyError,
+    apply_plan_from_s3_to_local_target,
     apply_plan_to_s3_store,
     apply_plan_to_local_store,
     apply_plan_to_local_target,
@@ -488,18 +489,26 @@ def main(argv: list[str] | None = None) -> int:
             config = load_config(Path(args.config))
             plan = load_plan(Path(args.plan))
             if args.backend == "s3":
-                if plan.get("mode") == "download":
-                    raise ApplyError(
-                        "S3 apply currently supports upload/remote plans only; "
-                        "download apply still needs a local target backend"
+                if plan.get("mode") == "download" or args.target_root:
+                    if not args.target_root:
+                        raise ApplyError("--target-root is required for S3 download apply")
+                    result = apply_plan_from_s3_to_local_target(
+                        plan=plan,
+                        config=config,
+                        target_root=Path(args.target_root),
+                        trash_root=Path(args.trash_root) if args.trash_root else None,
+                        timestamp_utc=args.timestamp_utc,
+                        allow_conflicts=args.allow_conflicts,
+                        target_device=str(plan.get("target", "target")),
                     )
-                result = apply_plan_to_s3_store(
-                    plan=plan,
-                    config=config,
-                    timestamp_utc=args.timestamp_utc,
-                    allow_conflicts=args.allow_conflicts,
-                    source_device=str(plan.get("source", "source")),
-                )
+                else:
+                    result = apply_plan_to_s3_store(
+                        plan=plan,
+                        config=config,
+                        timestamp_utc=args.timestamp_utc,
+                        allow_conflicts=args.allow_conflicts,
+                        source_device=str(plan.get("source", "source")),
+                    )
             elif args.backend == "local" and (plan.get("mode") == "download" or args.target_root):
                 if not args.target_root:
                     raise ApplyError("--target-root is required for local target apply")

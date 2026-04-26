@@ -103,6 +103,58 @@ def apply_plan_to_s3_store(
     }
 
 
+def apply_plan_from_s3_to_local_target(
+    plan: dict[str, Any],
+    config: dict[str, Any],
+    target_root: Path,
+    trash_root: Path | None = None,
+    timestamp_utc: str | None = None,
+    allow_conflicts: bool = False,
+    target_device: str | None = None,
+    store: S3ObjectStore | None = None,
+) -> dict[str, Any]:
+    s3_store = store or S3ObjectStore.from_config(config)
+    trash_base = trash_root or (target_root / ".sync_trash")
+    target_device = target_device or str(plan.get("target", "target"))
+    applied: list[dict[str, Any]] = []
+
+    for action in plan["actions"]:
+        if action["operation"] == "download":
+            applied.append(
+                _download_from_s3(
+                    store=s3_store,
+                    action=action,
+                    target_root=target_root,
+                    trash_root=trash_base,
+                    origin_device=str(plan.get("source", "s3")),
+                    timestamp_utc=timestamp_utc,
+                    config=config,
+                    target_device=target_device,
+                )
+            )
+        else:
+            applied.append(
+                _apply_local_action(
+                    action=action,
+                    target_root=target_root,
+                    trash_root=trash_base,
+                    origin_device=str(plan.get("source", "s3")),
+                    timestamp_utc=timestamp_utc,
+                    allow_conflicts=allow_conflicts,
+                    config=config,
+                    target_device=target_device,
+                )
+            )
+
+    return {
+        "backend": "s3-to-local-target",
+        "target_root": str(target_root),
+        "trash_root": str(trash_base),
+        "applied": applied,
+        "summary": _summary(applied),
+    }
+
+
 def apply_plan_to_local_target(
     plan: dict[str, Any],
     target_root: Path,
@@ -323,6 +375,39 @@ def _download(
         result["backup_path"] = str(backup_path)
     if conversion_result is not None:
         result["conversion"] = _conversion_summary(conversion_result)
+    return result
+
+
+def _download_from_s3(
+    store: S3ObjectStore,
+    action: dict[str, Any],
+    target_root: Path,
+    trash_root: Path,
+    origin_device: str,
+    timestamp_utc: str | None,
+    config: dict[str, Any] | None,
+    target_device: str,
+) -> dict[str, Any]:
+    source = action["source"]
+    source_key = source["sync_key"]
+    _verify_store_object_fingerprint(store, source_key, source, role="source")
+    with tempfile.TemporaryDirectory() as tmp:
+        staged_path = Path(tmp) / Path(source_key).name
+        store.download_file(source_key, staged_path)
+        staged_action = dict(action)
+        staged_source = dict(source)
+        staged_source["absolute_path"] = str(staged_path)
+        staged_action["source"] = staged_source
+        result = _download(
+            staged_action,
+            target_root,
+            trash_root,
+            origin_device,
+            timestamp_utc,
+            config,
+            target_device,
+        )
+    result["source_sync_key"] = source_key
     return result
 
 

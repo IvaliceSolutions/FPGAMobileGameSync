@@ -9,7 +9,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from fpgmobilegamesync.executor import ApplyError, apply_plan_to_s3_store
+from fpgmobilegamesync.executor import (
+    ApplyError,
+    apply_plan_from_s3_to_local_target,
+    apply_plan_to_s3_store,
+)
 from fpgmobilegamesync.object_store import ObjectStoreError
 from fpgmobilegamesync.s3_store import S3ObjectStore, s3_connection_from_config
 
@@ -223,6 +227,105 @@ class S3ObjectStoreTests(unittest.TestCase):
             with self.assertRaises(ApplyError):
                 apply_plan_to_s3_store(plan=plan, config={}, store=store)
 
+    def test_apply_download_plan_from_s3_to_local_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target_root = root / "target"
+            trash_root = root / "trash"
+            target_root.mkdir()
+            client = FakeS3Client(
+                {
+                    "systems/gba/games/New.gba": b"new",
+                    "systems/gba/games/Changed.gba": b"changed",
+                    "systems/gba/games/Renamed.gba": b"renamed",
+                }
+            )
+            store = S3ObjectStore(client=client, bucket="bucket")
+            (target_root / "Changed.gba").write_bytes(b"old")
+            (target_root / "OldName.gba").write_bytes(b"renamed")
+            (target_root / "Deleted.gba").write_bytes(b"deleted")
+            plan = {
+                "mode": "download",
+                "source": "s3",
+                "target": "thor",
+                "actions": [
+                    {"operation": "noop", "reason": "unchanged"},
+                    {
+                        "operation": "download",
+                        "reason": "added",
+                        "source": _s3_item("New.gba", b"new"),
+                    },
+                    {
+                        "operation": "download",
+                        "reason": "modified",
+                        "backup_target_before_apply": True,
+                        "source": _s3_item("Changed.gba", b"changed"),
+                        "target": _local_item(target_root / "Changed.gba", "Changed.gba"),
+                    },
+                    {
+                        "operation": "rename_local",
+                        "reason": "renamed",
+                        "source": _s3_item("Renamed.gba", b"renamed"),
+                        "target": _local_item(target_root / "OldName.gba", "OldName.gba"),
+                    },
+                    {
+                        "operation": "trash_local",
+                        "reason": "missing_from_source_after_rename_detection",
+                        "target": _local_item(target_root / "Deleted.gba", "Deleted.gba"),
+                    },
+                ],
+            }
+
+            result = apply_plan_from_s3_to_local_target(
+                plan=plan,
+                config={},
+                target_root=target_root,
+                trash_root=trash_root,
+                timestamp_utc="2026-04-26T23-30-00Z",
+                store=store,
+            )
+
+            self.assertEqual((target_root / "New.gba").read_bytes(), b"new")
+            self.assertEqual((target_root / "Changed.gba").read_bytes(), b"changed")
+            self.assertEqual((target_root / "Renamed.gba").read_bytes(), b"renamed")
+            self.assertFalse((target_root / "OldName.gba").exists())
+            self.assertFalse((target_root / "Deleted.gba").exists())
+            self.assertTrue(
+                (trash_root / "backups/2026-04-26T23-30-00Z/s3/Changed.gba").exists()
+            )
+            self.assertTrue(
+                (trash_root / "deleted/2026-04-26T23-30-00Z/s3/Deleted.gba").exists()
+            )
+            self.assertEqual(result["summary"]["download:applied"], 2)
+            self.assertEqual(result["summary"]["rename_local:applied"], 1)
+
+    def test_apply_download_refuses_when_s3_source_changed_since_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target_root = Path(tmp) / "target"
+            target_root.mkdir()
+            client = FakeS3Client({"systems/gba/games/Game.gba": b"mutated"})
+            store = S3ObjectStore(client=client, bucket="bucket")
+            plan = {
+                "mode": "download",
+                "source": "s3",
+                "target": "thor",
+                "actions": [
+                    {
+                        "operation": "download",
+                        "reason": "modified",
+                        "source": _s3_item("Game.gba", b"planned"),
+                    }
+                ],
+            }
+
+            with self.assertRaises(ApplyError):
+                apply_plan_from_s3_to_local_target(
+                    plan=plan,
+                    config={},
+                    target_root=target_root,
+                    store=store,
+                )
+
 
 class FakeS3Client:
     def __init__(self, objects: dict[str, bytes]) -> None:
@@ -310,6 +413,10 @@ def _s3_item(content_path: str, data: bytes, kind: str = "games", system: str = 
         "native_sha256": sha256,
         "canonical_sha256": sha256,
     }
+
+
+def _local_item(path: Path, content_path: str, kind: str = "games", system: str = "gba") -> dict:
+    return _item(path, content_path, kind=kind, system=system)
 
 
 if __name__ == "__main__":

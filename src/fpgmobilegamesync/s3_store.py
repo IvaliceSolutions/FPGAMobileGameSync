@@ -128,6 +128,11 @@ class S3ObjectStore:
         except Exception as exc:
             raise ObjectStoreError(f"failed to upload S3 object {sync_key}: {exc}") from exc
 
+    def download_file(self, sync_key: str, target_path: Path) -> None:
+        data = self._get_object_bytes(sync_key)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(data)
+
     def copy_object(self, from_sync_key: str, to_sync_key: str) -> None:
         source_key = self._remote_key(from_sync_key)
         target_key = self._remote_key(to_sync_key)

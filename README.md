@@ -313,8 +313,21 @@ existing object, the S3 backend re-reads the object and verifies the
 `native_sha256` / `native_size` stored in the plan. After applying, it rebuilds
 and writes `manifests/s3.json` from the current `systems/` objects.
 
-S3 apply currently handles source -> S3 plans. Applying S3 -> MiSTer/Thor
-download plans will use the local/SFTP target backend in a later step.
+Apply an S3 -> local target download plan:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli apply \
+  --plan download-plan.json \
+  --backend s3 \
+  --target-root /Volumes/thor-storage/RetroArch/saves/GBA \
+  --trash-root /Volumes/thor-storage/RetroArch/.sync_trash \
+  --pretty
+```
+
+For download plans, the S3 backend stages each source object in a temporary
+file, verifies it against the plan fingerprint, then reuses the same local
+target logic as the filesystem backend. That means local backups, local trash,
+case-only renames, and save conversion still follow the same rules.
 
 ## Applying A Plan To The Local Object Store
 
