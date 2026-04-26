@@ -61,6 +61,10 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(item["native_content_path"], "Golden Sun.srm")
             self.assertEqual(item["content_path"], "Golden Sun.sav")
             self.assertEqual(item["sync_key"], "systems/gba/saves/Golden Sun.sav")
+            self.assertEqual(item["sha256"], item["canonical_sha256"])
+            self.assertEqual(item["native_sha256"], item["canonical_sha256"])
+            self.assertEqual(item["size"], item["canonical_size"])
+            self.assertEqual(item["native_size"], item["canonical_size"])
 
 
 def _config(root: Path) -> dict:

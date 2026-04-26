@@ -28,8 +28,12 @@ class ObjectItem:
     native_content_path: str
     sync_key: str
     size: int
+    native_size: int
+    canonical_size: int
     modified_ns: int
     sha256: str
+    native_sha256: str
+    canonical_sha256: str
 
 
 class LocalObjectStore:
@@ -139,6 +143,7 @@ def _scan_object(root: Path, path: Path) -> ObjectItem | None:
     content_type = parts[2]
     content_path = str(Path(*parts[3:]))
     stat = path.stat()
+    sha256 = _sha256(path)
     return ObjectItem(
         device="s3",
         system=system,
@@ -149,8 +154,12 @@ def _scan_object(root: Path, path: Path) -> ObjectItem | None:
         native_content_path=content_path,
         sync_key=relative_path,
         size=stat.st_size,
+        native_size=stat.st_size,
+        canonical_size=stat.st_size,
         modified_ns=stat.st_mtime_ns,
-        sha256=_sha256(path),
+        sha256=sha256,
+        native_sha256=sha256,
+        canonical_sha256=sha256,
     )
 
 

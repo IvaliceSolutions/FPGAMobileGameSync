@@ -140,6 +140,16 @@ def _normalise_item(item: dict[str, Any]) -> dict[str, Any]:
         normalised["content_path"] = normalised["relative_path"]
     if "native_content_path" not in normalised:
         normalised["native_content_path"] = normalised["content_path"]
+    if "canonical_sha256" not in normalised:
+        normalised["canonical_sha256"] = normalised["sha256"]
+    if "native_sha256" not in normalised:
+        normalised["native_sha256"] = normalised["sha256"]
+    if "canonical_size" not in normalised:
+        normalised["canonical_size"] = int(normalised["size"])
+    if "native_size" not in normalised:
+        normalised["native_size"] = int(normalised["size"])
+    normalised["sha256"] = normalised["canonical_sha256"]
+    normalised["size"] = int(normalised["canonical_size"])
     return normalised
 
 
@@ -156,13 +166,18 @@ def _casefold_path(path: str) -> str:
 
 
 def _hash_key(item: dict[str, Any]) -> tuple[str, str, str, int]:
-    return (item["system"], item["type"], item["sha256"], int(item["size"]))
+    return (
+        item["system"],
+        item["type"],
+        item["canonical_sha256"],
+        int(item["canonical_size"]),
+    )
 
 
 def _same_content(source_item: dict[str, Any], target_item: dict[str, Any]) -> bool:
     return (
-        source_item["sha256"] == target_item["sha256"]
-        and int(source_item["size"]) == int(target_item["size"])
+        source_item["canonical_sha256"] == target_item["canonical_sha256"]
+        and int(source_item["canonical_size"]) == int(target_item["canonical_size"])
     )
 
 

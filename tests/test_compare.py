@@ -82,6 +82,38 @@ class CompareTests(unittest.TestCase):
 
         self.assertEqual(result["summary"]["case_conflict"], 1)
 
+    def test_compare_uses_canonical_hash_not_native_hash(self) -> None:
+        source = _manifest(
+            [
+                _item(
+                    "psx",
+                    "saves",
+                    "Final Fantasy 9 (FR).sav",
+                    "native-mister",
+                    131072,
+                    canonical_sha256="canonical-card",
+                    canonical_size=131072,
+                )
+            ]
+        )
+        target = _manifest(
+            [
+                _item(
+                    "psx",
+                    "saves",
+                    "Final Fantasy 9 (FR).sav",
+                    "native-thor",
+                    131200,
+                    canonical_sha256="canonical-card",
+                    canonical_size=131072,
+                )
+            ]
+        )
+
+        result = compare_manifests(source, target)
+
+        self.assertEqual(result["summary"]["unchanged"], 1)
+
 
 def _manifest(items: list[dict]) -> dict:
     return {
@@ -89,7 +121,15 @@ def _manifest(items: list[dict]) -> dict:
     }
 
 
-def _item(system: str, kind: str, path: str, sha256: str, size: int) -> dict:
+def _item(
+    system: str,
+    kind: str,
+    path: str,
+    sha256: str,
+    size: int,
+    canonical_sha256: str | None = None,
+    canonical_size: int | None = None,
+) -> dict:
     return {
         "device": "test",
         "system": system,
@@ -99,8 +139,12 @@ def _item(system: str, kind: str, path: str, sha256: str, size: int) -> dict:
         "content_path": path,
         "sync_key": f"systems/{system}/{kind}/{path}",
         "size": size,
+        "native_size": size,
+        "canonical_size": canonical_size if canonical_size is not None else size,
         "modified_ns": 1,
         "sha256": sha256,
+        "native_sha256": sha256,
+        "canonical_sha256": canonical_sha256 if canonical_sha256 is not None else sha256,
     }
 
 

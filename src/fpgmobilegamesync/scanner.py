@@ -27,8 +27,12 @@ class ScanItem:
     native_content_path: str
     sync_key: str
     size: int
+    native_size: int
+    canonical_size: int
     modified_ns: int
     sha256: str
+    native_sha256: str
+    canonical_sha256: str
 
 
 def scan(
@@ -156,6 +160,10 @@ def _scan_file(
     path: Path,
 ) -> ScanItem:
     stat = path.stat()
+    native_size = stat.st_size
+    native_sha256 = _sha256(path)
+    canonical_size = native_size
+    canonical_sha256 = native_sha256
     native_content_path = str(path.relative_to(content_root))
     content_path = native_content_path
     if is_convertible_save(config=config, system=system, content_type=content_type):
@@ -174,9 +182,13 @@ def _scan_file(
         content_path=content_path,
         native_content_path=native_content_path,
         sync_key=f"systems/{system}/{content_type}/{content_path}",
-        size=stat.st_size,
+        size=canonical_size,
+        native_size=native_size,
+        canonical_size=canonical_size,
         modified_ns=stat.st_mtime_ns,
-        sha256=_sha256(path),
+        sha256=canonical_sha256,
+        native_sha256=native_sha256,
+        canonical_sha256=canonical_sha256,
     )
 
 

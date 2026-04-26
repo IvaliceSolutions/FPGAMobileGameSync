@@ -57,11 +57,18 @@ Each scanned item contains:
 - `native_content_path`: actual path relative to the configured content folder
   on that device.
 - `sync_key`: canonical object key under the S3 `systems/` prefix.
+- `canonical_sha256` / `canonical_size`: identity used for sync decisions.
+- `native_sha256` / `native_size`: raw local file fingerprint used for apply-time
+  safety checks.
 
 `content_path` is what lets MiSTer and Thor be compared even though their local
 roots and save extensions differ. For example, Thor `Golden Sun.srm` and MiSTer
 `Golden Sun.sav` both map to canonical `Golden Sun.sav`, while
 `native_content_path` preserves the real local filename to use during apply.
+
+For GBA and SNES the canonical and native hashes are identical. For PSX they are
+kept separate because the future PSX converter may produce different native
+bytes per target while still representing the same per-game save.
 
 ## Comparing Manifests
 
@@ -299,6 +306,10 @@ save_mappings:
 
 The extension may be omitted or unknown there too. The sync key remains based on
 `mister_game_folder`; Thor output uses the RetroArch stem.
+
+This project assumes PSX saves are per-game files in your setup, not shared
+multi-game memory cards. A PSX save is therefore synchronized as one logical
+file per game instead of as individual internal memory-card blocks.
 
 Names are compared case-insensitively for safety, but the source casing remains
 canonical. A case-only rename such as `pokemon.sav` -> `Pokemon.sav` is planned
