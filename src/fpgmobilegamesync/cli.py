@@ -31,6 +31,7 @@ from .planner import PlanError, build_plan
 from .remote_scanner import scan_remote
 from .s3_store import S3ObjectStore
 from .scanner import ScanError, scan
+from .script_generator import ScriptGenerationError, generate_profile_scripts
 from .sftp_client import SftpError
 from .sync_engine import SyncError, run_local_sync, run_s3_sync
 
@@ -439,6 +440,57 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pretty-print JSON output.",
     )
 
+    scripts_parser = subparsers.add_parser(
+        "scripts",
+        help="Generate small launcher scripts for sync profiles.",
+    )
+    scripts_subparsers = scripts_parser.add_subparsers(
+        dest="scripts_command",
+        required=True,
+    )
+    scripts_generate_parser = scripts_subparsers.add_parser(
+        "generate",
+        help="Generate shell scripts for configured sync profiles.",
+    )
+    scripts_generate_parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Directory where launcher scripts are written.",
+    )
+    scripts_generate_parser.add_argument(
+        "--profile",
+        action="append",
+        help="Profile to generate. Can be repeated. Defaults to all configured profiles.",
+    )
+    scripts_generate_parser.add_argument(
+        "--project-root",
+        help="Project root baked into the scripts. Defaults to the current directory.",
+    )
+    scripts_generate_parser.add_argument(
+        "--config-path",
+        help="Config path baked into the scripts. Defaults to <project-root>/mister-thor-sync.json.",
+    )
+    scripts_generate_parser.add_argument(
+        "--python-bin",
+        default="python3",
+        help="Python command baked into the scripts. Defaults to python3.",
+    )
+    scripts_generate_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Bake --apply into generated scripts.",
+    )
+    scripts_generate_parser.add_argument(
+        "--pretty-output",
+        action="store_true",
+        help="Bake --pretty into generated scripts.",
+    )
+    scripts_generate_parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output.",
+    )
+
     sync_parser = subparsers.add_parser(
         "sync",
         help="Run a full source -> store -> target sync workflow.",
@@ -794,6 +846,26 @@ def main(argv: list[str] | None = None) -> int:
             )
             sys.stdout.write("\n")
             return 1 if result["status"] == "error" else 0
+        if args.command == "scripts" and args.scripts_command == "generate":
+            config = load_config(Path(args.config))
+            result = generate_profile_scripts(
+                config=config,
+                output_dir=Path(args.output_dir),
+                profiles=args.profile,
+                project_root=Path(args.project_root) if args.project_root else None,
+                config_path=Path(args.config_path) if args.config_path else Path(args.config),
+                python_bin=args.python_bin,
+                apply=args.apply,
+                pretty=args.pretty_output,
+            )
+            json.dump(
+                result,
+                sys.stdout,
+                indent=2 if args.pretty else None,
+                sort_keys=True,
+            )
+            sys.stdout.write("\n")
+            return 0
         if args.command == "sync":
             config = load_config(Path(args.config))
             profile = _sync_profile_from_args(config, args.profile)
@@ -888,6 +960,7 @@ def main(argv: list[str] | None = None) -> int:
         ObjectStoreError,
         PlanError,
         ScanError,
+        ScriptGenerationError,
         SftpError,
         SyncError,
     ) as exc:

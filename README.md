@@ -308,6 +308,27 @@ Available profiles:
 - `third-mister-to-thor`: run on another device, sync MiSTer -> Thor over SFTP.
 - `third-thor-to-mister`: run on another device, sync Thor -> MiSTer over SFTP.
 
+Generate small executable launchers for those profiles:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli scripts generate \
+  --output-dir /tmp/fpgms-launchers \
+  --profile thor-pull \
+  --profile thor-push \
+  --pretty
+```
+
+Each generated script sets `PYTHONPATH`, calls the configured profile, and
+forwards extra arguments. For example:
+
+```sh
+/tmp/fpgms-launchers/fpgms-thor-pull.sh --system gba --type saves --apply
+```
+
+The generated scripts also honor `FPGMS_PROJECT_ROOT`, `FPGMS_CONFIG`, and
+`FPGMS_PYTHON` environment variables when you need to move the repository or
+switch Python.
+
 For development, mounted shares, or a third controller device, override the
 configured source and target roots:
 
