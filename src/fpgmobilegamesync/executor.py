@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import shutil
 import tempfile
 import uuid
@@ -176,10 +177,17 @@ def _upload(
     source_path = Path(source["absolute_path"])
     if not source_path.exists():
         raise ApplyError(f"source file not found: {source_path}")
+    _verify_file_fingerprint(source_path, source, role="source")
 
     target_key = _target_sync_key(action)
     existing_target_key = action.get("target", {}).get("sync_key", target_key)
     backup_key = None
+    if "target" in action and store.object_exists(existing_target_key):
+        _verify_file_fingerprint(
+            store._object_path(existing_target_key),
+            action["target"],
+            role="target",
+        )
     if action.get("backup_target_before_apply") and store.object_exists(existing_target_key):
         backup_key = store.backup_object(
             existing_target_key,
@@ -203,6 +211,7 @@ def _upload(
                 source_path=source_path,
                 output_path=converted_path,
             )
+            _verify_conversion_fingerprint(conversion_result, source)
             store.put_file(converted_path, target_key)
     else:
         store.put_file(source_path, target_key)
@@ -232,10 +241,13 @@ def _download(
     source_path = Path(source["absolute_path"])
     if not source_path.exists():
         raise ApplyError(f"source file not found: {source_path}")
+    _verify_file_fingerprint(source_path, source, role="source")
 
     target_path = _target_path_for_download(action, target_root, config, target_device)
     existing_target_path = _existing_target_path_for_download(action, target_root)
     backup_path = None
+    if "target" in action and existing_target_path.exists():
+        _verify_file_fingerprint(existing_target_path, action["target"], role="target")
     if action.get("backup_target_before_apply") and existing_target_path.exists():
         backup_path = _backup_local_file(
             existing_target_path,
@@ -260,6 +272,7 @@ def _download(
             source_path=source_path,
             output_path=target_path,
         )
+        _verify_conversion_fingerprint(conversion_result, source)
     else:
         shutil.copy2(source_path, target_path)
 
@@ -278,6 +291,11 @@ def _download(
 def _rename_remote(store: LocalObjectStore, action: dict[str, Any]) -> dict[str, Any]:
     source_key = action["source"]["sync_key"]
     target_key = action["target"]["sync_key"]
+    _verify_file_fingerprint(
+        store._object_path(target_key),
+        action["target"],
+        role="target",
+    )
     store.rename_object(target_key, source_key)
     return {
         "operation": "rename_remote",
@@ -305,6 +323,7 @@ def _rename_local(
     )
     if not old_path.exists():
         raise ApplyError(f"target file not found for rename: {old_path}")
+    _verify_file_fingerprint(old_path, action["target"], role="target")
     _rename_path_case_aware(old_path, new_path)
     _prune_empty_dirs(old_path.parent, target_root)
     return {
@@ -322,6 +341,11 @@ def _trash_remote(
     timestamp_utc: str | None,
 ) -> dict[str, Any]:
     target_key = action["target"]["sync_key"]
+    _verify_file_fingerprint(
+        store._object_path(target_key),
+        action["target"],
+        role="target",
+    )
     trash_key = store.trash_object(
         target_key,
         origin_device=origin_device,
@@ -346,6 +370,7 @@ def _trash_local(
     source_path = target_root / target.get("native_content_path", target["content_path"])
     if not source_path.exists():
         raise ApplyError(f"target file not found for trash: {source_path}")
+    _verify_file_fingerprint(source_path, target, role="target")
     trash_path = _trash_path(
         source_path,
         target_root,
@@ -485,6 +510,54 @@ def _conversion_summary(result: dict[str, Any]) -> dict[str, Any]:
         if key in result:
             summary[key] = result[key]
     return summary
+
+
+def _verify_file_fingerprint(path: Path, item: dict[str, Any], role: str) -> None:
+    expected_sha = item.get("native_sha256")
+    expected_size = item.get("native_size")
+    if expected_sha is None and expected_size is None:
+        return
+    actual_size = path.stat().st_size
+    if expected_size is not None and actual_size != int(expected_size):
+        raise ApplyError(
+            f"{role} file changed since plan: {path}; "
+            f"size {actual_size} != expected {expected_size}"
+        )
+    if expected_sha is not None:
+        actual_sha = _sha256(path)
+        if actual_sha != expected_sha:
+            raise ApplyError(
+                f"{role} file changed since plan: {path}; "
+                f"sha256 {actual_sha} != expected {expected_sha}"
+            )
+
+
+def _verify_conversion_fingerprint(
+    conversion_result: dict[str, Any],
+    source_item: dict[str, Any],
+) -> None:
+    expected_sha = source_item.get("canonical_sha256")
+    expected_size = source_item.get("canonical_size")
+    if "canonical_size" not in conversion_result and "canonical_sha256" not in conversion_result:
+        return
+    if expected_size is not None and conversion_result.get("canonical_size") != int(expected_size):
+        raise ApplyError(
+            "converted save canonical size does not match source manifest: "
+            f"{conversion_result.get('canonical_size')} != {expected_size}"
+        )
+    if expected_sha is not None and conversion_result.get("canonical_sha256") != expected_sha:
+        raise ApplyError(
+            "converted save canonical hash does not match source manifest: "
+            f"{conversion_result.get('canonical_sha256')} != {expected_sha}"
+        )
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _rename_path_case_aware(old_path: Path, new_path: Path) -> None:

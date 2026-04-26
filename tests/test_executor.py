@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -115,6 +116,32 @@ class ExecutorTests(unittest.TestCase):
             with self.assertRaises(ApplyError):
                 apply_plan_to_local_store(plan, store_root=Path(tmp))
 
+    def test_apply_refuses_when_upload_source_changed_since_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store_root = root / "store"
+            source_root = root / "source"
+            source_root.mkdir()
+            source_file = source_root / "Changed.gba"
+            source_file.write_bytes(b"planned")
+            source_item = _item(source_file, "Changed.gba")
+            source_file.write_bytes(b"mutated")
+
+            plan = {
+                "source": "mister",
+                "target": "s3",
+                "actions": [
+                    {
+                        "operation": "upload",
+                        "reason": "added",
+                        "source": source_item,
+                    }
+                ],
+            }
+
+            with self.assertRaises(ApplyError):
+                apply_plan_to_local_store(plan, store_root=store_root)
+
     def test_apply_modified_case_rename_to_local_store(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -166,6 +193,31 @@ class ExecutorTests(unittest.TestCase):
                     / "backups/2026-04-26T21-30-00Z/mister/systems/gba/saves/pokemon.sav"
                 ).exists()
             )
+
+    def test_apply_refuses_when_remote_trash_target_changed_since_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store_root = root / "store"
+            deleted_file = store_root / "systems/gba/games/Deleted.gba"
+            deleted_file.parent.mkdir(parents=True)
+            deleted_file.write_bytes(b"planned-delete")
+            target_item = _item(deleted_file, "Deleted.gba")
+            deleted_file.write_bytes(b"remote-change")
+
+            plan = {
+                "source": "mister",
+                "target": "s3",
+                "actions": [
+                    {
+                        "operation": "trash_remote",
+                        "reason": "missing_from_source_after_rename_detection",
+                        "target": target_item,
+                    }
+                ],
+            }
+
+            with self.assertRaises(ApplyError):
+                apply_plan_to_local_store(plan, store_root=store_root)
 
     def test_apply_download_plan_to_local_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -247,6 +299,40 @@ class ExecutorTests(unittest.TestCase):
             self.assertEqual(result["summary"]["download:applied"], 2)
             self.assertEqual(result["summary"]["rename_local:applied"], 1)
             self.assertEqual(result["summary"]["trash_local:applied"], 1)
+
+    def test_apply_refuses_when_download_target_changed_since_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store_root = root / "store"
+            target_root = root / "target"
+            store_games = store_root / "systems/gba/games"
+            store_games.mkdir(parents=True)
+            target_root.mkdir()
+
+            source_file = store_games / "Changed.gba"
+            target_file = target_root / "Changed.gba"
+            source_file.write_bytes(b"new")
+            target_file.write_bytes(b"planned-old")
+            target_item = _item(target_file, "Changed.gba")
+            target_file.write_bytes(b"user-progress")
+
+            plan = {
+                "mode": "download",
+                "source": "s3",
+                "target": "thor",
+                "actions": [
+                    {
+                        "operation": "download",
+                        "reason": "modified",
+                        "backup_target_before_apply": True,
+                        "source": _item(source_file, "Changed.gba"),
+                        "target": target_item,
+                    }
+                ],
+            }
+
+            with self.assertRaises(ApplyError):
+                apply_plan_to_local_target(plan, target_root=target_root)
 
     def test_apply_modified_case_rename_to_local_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -401,6 +487,61 @@ class ExecutorTests(unittest.TestCase):
                 "raw_psx_memory_card",
             )
 
+    def test_download_psx_save_refuses_canonical_conversion_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store_root = root / "store"
+            target_root = root / "target"
+            store_saves = store_root / "systems/psx/saves"
+            store_saves.mkdir(parents=True)
+            target_root.mkdir()
+
+            source_file = store_saves / "Final Fantasy 9 (FR).sav"
+            source_file.write_bytes(_raw_psx_card())
+            source_item = _item(
+                source_file,
+                "Final Fantasy 9 (FR).sav",
+                kind="saves",
+                system="psx",
+            )
+            source_item["canonical_sha256"] = "0" * 64
+            plan = {
+                "mode": "download",
+                "source": "s3",
+                "target": "thor",
+                "actions": [
+                    {
+                        "operation": "download",
+                        "reason": "added",
+                        "source": source_item,
+                    }
+                ],
+            }
+            config = _config()
+            config["systems"]["psx"] = {
+                "save_conversion": {
+                    "strategy": "psx_raw_memory_card",
+                    "expected_raw_card_size": 131072,
+                    "mister_to_thor": {
+                        "accepted_input_extensions": [".sav"],
+                        "output_extension": ".srm",
+                        "validate_raw_card_size": True,
+                    },
+                    "thor_to_mister": {
+                        "accepted_input_extensions": [".srm"],
+                        "output_extension": ".sav",
+                        "validate_raw_card_size": True,
+                    },
+                }
+            }
+
+            with self.assertRaises(ApplyError):
+                apply_plan_to_local_target(
+                    plan,
+                    target_root=target_root,
+                    config=config,
+                )
+
 
 def _item(
     path: Path,
@@ -408,6 +549,8 @@ def _item(
     kind: str = "games",
     system: str = "gba",
 ) -> dict:
+    size = path.stat().st_size if path.exists() else 0
+    sha256 = _sha256(path) if path.exists() else "missing"
     return {
         "device": "test",
         "system": system,
@@ -416,9 +559,13 @@ def _item(
         "relative_path": content_path,
         "content_path": content_path,
         "sync_key": f"systems/{system}/{kind}/{content_path}",
-        "size": path.stat().st_size if path.exists() else 0,
+        "size": size,
+        "native_size": size,
+        "canonical_size": size,
         "modified_ns": 1,
-        "sha256": "test",
+        "sha256": sha256,
+        "native_sha256": sha256,
+        "canonical_sha256": sha256,
     }
 
 
@@ -439,6 +586,13 @@ def _raw_psx_card() -> bytes:
             checksum ^= byte
         data[start + 127] = checksum
     return bytes(data)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        digest.update(handle.read())
+    return digest.hexdigest()
 
 
 def _config() -> dict:

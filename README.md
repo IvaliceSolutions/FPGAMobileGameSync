@@ -200,6 +200,13 @@ Local target apply supports:
 - `trash_local`
 - `conflict`, which is refused unless `--allow-conflicts` is passed
 
+Before applying any write, rename, overwrite, or trash operation, the executor
+rechecks the relevant `native_sha256` / `native_size` from the plan. If the
+source or target changed after the plan was created, apply stops with a conflict
+style error instead of overwriting or trashing stale data. For converted saves,
+the produced `canonical_sha256` / `canonical_size` must also match the source
+manifest before the file is written.
+
 When an upload overwrites an existing object, the old object is copied under:
 
 ```text
