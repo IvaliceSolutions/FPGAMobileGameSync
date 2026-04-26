@@ -403,8 +403,12 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument(
         "--backend",
         choices=("local", "s3"),
-        default="local",
-        help="Backend to validate. S3 also checks required environment variables.",
+        help="Backend to validate. Defaults to the selected profile backend, otherwise local.",
+    )
+    doctor_parser.add_argument(
+        "--profile",
+        action="append",
+        help="Named sync profile to validate. Can be repeated.",
     )
     doctor_parser.add_argument(
         "--device",
@@ -912,6 +916,7 @@ def main(argv: list[str] | None = None) -> int:
             config = load_config(Path(args.config))
             result = run_doctor(
                 config=config,
+                profiles=args.profile,
                 devices=args.device,
                 systems=args.system,
                 types=args.type,

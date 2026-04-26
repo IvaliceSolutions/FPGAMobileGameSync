@@ -23,47 +23,180 @@ class DoctorCheck:
 
 def run_doctor(
     config: dict[str, Any],
+    profiles: list[str] | None = None,
     devices: list[str] | None = None,
     systems: list[str] | None = None,
     types: list[str] | None = None,
-    backend: str = "local",
+    backend: str | None = None,
     check_paths: bool = False,
     check_env: bool = False,
     check_remote: bool = False,
     check_dependencies: bool = False,
 ) -> dict[str, Any]:
-    if backend not in {"local", "s3"}:
-        raise DoctorError(f"unsupported doctor backend: {backend}")
-
-    selected_devices = devices or sorted(config.get("devices", {}).keys())
-    selected_systems = systems or list(config.get("defaults", {}).get("systems", []))
-    selected_types = types or list(config.get("defaults", {}).get("types", []))
     checks: list[DoctorCheck] = []
+    selected_profiles = _select_profiles(config, profiles, checks)
+    effective_backend = _resolve_backend(backend, selected_profiles, checks)
+    if effective_backend not in {"local", "s3"}:
+        raise DoctorError(f"unsupported doctor backend: {effective_backend}")
+    profile_devices = _devices_for_profiles(config, selected_profiles)
+    profile_remote_devices = _remote_devices_for_profiles(config, selected_profiles)
+    profile_systems = _profile_list_union(selected_profiles, "systems")
+    profile_types = _profile_list_union(selected_profiles, "types")
+    effective_check_remote = check_remote or bool(profile_remote_devices)
+
+    selected_devices = devices or profile_devices or sorted(config.get("devices", {}).keys())
+    if profile_remote_devices and not check_remote:
+        selected_remote_devices = profile_remote_devices
+    else:
+        selected_remote_devices = selected_devices
+    selected_systems = systems or profile_systems or list(config.get("defaults", {}).get("systems", []))
+    selected_types = types or profile_types or list(config.get("defaults", {}).get("types", []))
 
     _check_top_level(config, checks)
     _check_devices(config, selected_devices, check_paths, checks)
     _check_systems(config, selected_devices, selected_systems, selected_types, check_paths, checks)
     _check_sync_modes(config, checks)
     _check_sync_profiles(config, checks)
-    if backend == "s3" or check_env:
+    if effective_backend == "s3" or check_env:
         _check_s3(config, checks)
-    if check_remote:
-        _check_remote_devices(config, selected_devices, checks)
+    if effective_check_remote:
+        _check_remote_devices(config, selected_remote_devices, checks)
     if check_dependencies:
-        _check_python_dependencies(backend, check_remote, checks)
+        _check_python_dependencies(effective_backend, effective_check_remote, checks)
 
     summary = _summary(checks)
     return {
         "status": _status(summary),
-        "backend": backend,
+        "backend": effective_backend,
+        "profiles": [name for name, _profile in selected_profiles],
         "devices": selected_devices,
+        "remote_devices": selected_remote_devices if effective_check_remote else [],
         "systems": selected_systems,
         "types": selected_types,
-        "remote_checked": check_remote,
+        "remote_checked": effective_check_remote,
         "dependencies_checked": check_dependencies,
         "checks": [asdict(check) for check in checks],
         "summary": summary,
     }
+
+
+def _select_profiles(
+    config: dict[str, Any],
+    profile_names: list[str] | None,
+    checks: list[DoctorCheck],
+) -> list[tuple[str, dict[str, Any]]]:
+    if not profile_names:
+        return []
+    configured_profiles = config.get("sync_profiles", {})
+    if not isinstance(configured_profiles, dict):
+        checks.append(
+            DoctorCheck("error", "invalid_sync_profiles", "sync_profiles must be an object", {})
+        )
+        return []
+    selected = []
+    for name in profile_names:
+        profile = configured_profiles.get(name)
+        if not isinstance(profile, dict):
+            checks.append(
+                DoctorCheck(
+                    "error",
+                    "unknown_sync_profile",
+                    f"unknown sync profile: {name}",
+                    {"profile": name},
+                )
+            )
+            continue
+        selected.append((name, profile))
+    return selected
+
+
+def _resolve_backend(
+    backend: str | None,
+    selected_profiles: list[tuple[str, dict[str, Any]]],
+    checks: list[DoctorCheck],
+) -> str:
+    if backend is not None:
+        return backend
+    profile_backends = {
+        profile.get("backend")
+        for _name, profile in selected_profiles
+        if isinstance(profile.get("backend"), str)
+    }
+    if not profile_backends:
+        return "local"
+    if len(profile_backends) == 1:
+        return str(next(iter(profile_backends)))
+    checks.append(
+        DoctorCheck(
+            "error",
+            "conflicting_sync_profile_backends",
+            "selected sync profiles use different backends",
+            {"backends": sorted(profile_backends)},
+        )
+    )
+    return "local"
+
+
+def _devices_for_profiles(
+    config: dict[str, Any],
+    selected_profiles: list[tuple[str, dict[str, Any]]],
+) -> list[str]:
+    devices: set[str] = set()
+    for _name, profile in selected_profiles:
+        source, target = _profile_source_target(config, profile)
+        if source:
+            devices.add(source)
+        if target:
+            devices.add(target)
+    return sorted(devices)
+
+
+def _remote_devices_for_profiles(
+    config: dict[str, Any],
+    selected_profiles: list[tuple[str, dict[str, Any]]],
+) -> list[str]:
+    devices: set[str] = set()
+    for _name, profile in selected_profiles:
+        source, target = _profile_source_target(config, profile)
+        scan_backend = profile.get("scan_backend", "local")
+        source_backend = profile.get("source_backend", scan_backend)
+        target_backend = profile.get("target_backend", scan_backend)
+        if source and source_backend == "sftp":
+            devices.add(source)
+        if target and target_backend == "sftp":
+            devices.add(target)
+    return sorted(devices)
+
+
+def _profile_source_target(
+    config: dict[str, Any],
+    profile: dict[str, Any],
+) -> tuple[str | None, str | None]:
+    sync_modes = config.get("sync_modes", {})
+    if not isinstance(sync_modes, dict):
+        return None, None
+    direction = profile.get("direction")
+    mode = sync_modes.get(direction)
+    if not isinstance(mode, dict):
+        return None, None
+    source = mode.get("source")
+    target = mode.get("target")
+    return (
+        source if isinstance(source, str) else None,
+        target if isinstance(target, str) else None,
+    )
+
+
+def _profile_list_union(
+    selected_profiles: list[tuple[str, dict[str, Any]]],
+    key: str,
+) -> list[str]:
+    values: set[str] = set()
+    for _name, profile in selected_profiles:
+        configured = profile.get(key)
+        if isinstance(configured, list):
+            values.update(item for item in configured if isinstance(item, str))
+    return sorted(values)
 
 
 def _check_top_level(config: dict[str, Any], checks: list[DoctorCheck]) -> None:

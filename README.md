@@ -81,6 +81,16 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli --config mister-thor-sync.json d
   --pretty
 ```
 
+You can also validate a named sync profile directly. The doctor infers the
+profile backend and the SFTP side(s) to check:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli --config mister-thor-sync.json doctor \
+  --profile thor-pull \
+  --check-dependencies \
+  --pretty
+```
+
 To scan one system/type:
 
 ```sh
