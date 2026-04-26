@@ -192,6 +192,74 @@ class SyncEngineTests(unittest.TestCase):
             summary = json.loads((report_dir / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["scan_backend"], "sftp")
 
+    def test_sftp_sync_applies_remote_backup_rename_and_trash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report_dir = Path(tmp) / "reports" / "sftp-actions"
+            mister_client = FakeRemoteClient(
+                {
+                    "/media/fat/saves/GBA/Changed.sav": b"new-save!",
+                    "/media/fat/saves/GBA/Renamed.sav": b"same-save",
+                }
+            )
+            thor_client = FakeRemoteClient(
+                {
+                    "/storage/emulated/0/RetroArch/saves/GBA/Changed.srm": b"old-save!",
+                    "/storage/emulated/0/RetroArch/saves/GBA/OldName.srm": b"same-save",
+                    "/storage/emulated/0/RetroArch/saves/GBA/Deleted.srm": b"deleted",
+                }
+            )
+            store = S3ObjectStore(client=FakeS3Client({}), bucket="bucket")
+
+            result = run_s3_sync(
+                config=_remote_config(),
+                direction="mister-to-thor",
+                systems=["gba"],
+                types=["saves"],
+                apply=True,
+                timestamp_utc="2026-04-26T23-30-00Z",
+                report_dir=report_dir,
+                store=store,
+                scan_backend="sftp",
+                sftp_clients={
+                    "mister": mister_client,
+                    "thor": thor_client,
+                },
+            )
+
+            self.assertEqual(result["download_plan"]["summary"]["download"], 1)
+            self.assertEqual(result["download_plan"]["summary"]["rename_local"], 1)
+            self.assertEqual(result["download_plan"]["summary"]["trash_local"], 1)
+            self.assertEqual(
+                thor_client.files["/storage/emulated/0/RetroArch/saves/GBA/Changed.srm"],
+                b"new-save!",
+            )
+            self.assertEqual(
+                thor_client.files[
+                    "/storage/emulated/0/RetroArch/.sync_trash/backups/"
+                    "2026-04-26T23-30-00Z/s3/Changed.srm"
+                ],
+                b"old-save!",
+            )
+            self.assertNotIn(
+                "/storage/emulated/0/RetroArch/saves/GBA/OldName.srm",
+                thor_client.files,
+            )
+            self.assertEqual(
+                thor_client.files["/storage/emulated/0/RetroArch/saves/GBA/Renamed.srm"],
+                b"same-save",
+            )
+            self.assertNotIn(
+                "/storage/emulated/0/RetroArch/saves/GBA/Deleted.srm",
+                thor_client.files,
+            )
+            self.assertEqual(
+                thor_client.files[
+                    "/storage/emulated/0/RetroArch/.sync_trash/deleted/"
+                    "2026-04-26T23-30-00Z/s3/Deleted.srm"
+                ],
+                b"deleted",
+            )
+
 
 def _config(mister_root: Path, thor_root: Path) -> dict:
     return {
