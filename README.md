@@ -78,6 +78,43 @@ The comparator detects:
 - `deleted`
 - `ambiguous_rename`
 
+## Planning Actions
+
+Build an upload plan:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli plan \
+  --mode upload \
+  --source mister-manifest.json \
+  --target s3-manifest.json \
+  --source-name mister \
+  --target-name s3 \
+  --pretty
+```
+
+Build a download plan:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli plan \
+  --mode download \
+  --source s3-manifest.json \
+  --target thor-manifest.json \
+  --source-name s3 \
+  --target-name thor \
+  --pretty
+```
+
+Plan operations are dry-run oriented and currently include:
+
+- `noop`
+- `upload`
+- `download`
+- `rename_remote`
+- `rename_local`
+- `trash_remote`
+- `trash_local`
+- `conflict`
+
 ## Runtime Notes
 
 YAML loading requires `PyYAML`. When it is not available, use the generated

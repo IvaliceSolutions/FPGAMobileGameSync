@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .compare import CompareError, compare_manifests, load_manifest
 from .config import ConfigError, load_config
+from .planner import PlanError, build_plan
 from .scanner import ScanError, scan
 
 
@@ -80,6 +81,42 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pretty-print JSON output.",
     )
 
+    plan_parser = subparsers.add_parser(
+        "plan",
+        help="Build an upload or download plan from two manifests.",
+    )
+    plan_parser.add_argument(
+        "--mode",
+        required=True,
+        choices=("upload", "download"),
+        help="Plan direction. Upload means source -> S3, download means S3 -> target.",
+    )
+    plan_parser.add_argument(
+        "--source",
+        required=True,
+        help="Path to the source manifest JSON.",
+    )
+    plan_parser.add_argument(
+        "--target",
+        required=True,
+        help="Path to the target manifest JSON.",
+    )
+    plan_parser.add_argument(
+        "--source-name",
+        default="source",
+        help="Label for the source side.",
+    )
+    plan_parser.add_argument(
+        "--target-name",
+        default="target",
+        help="Label for the target side.",
+    )
+    plan_parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output.",
+    )
+
     return parser
 
 
@@ -119,7 +156,23 @@ def main(argv: list[str] | None = None) -> int:
             )
             sys.stdout.write("\n")
             return 0
-    except (CompareError, ConfigError, ScanError) as exc:
+        if args.command == "plan":
+            plan = build_plan(
+                source=load_manifest(Path(args.source)),
+                target=load_manifest(Path(args.target)),
+                mode=args.mode,
+                source_name=args.source_name,
+                target_name=args.target_name,
+            )
+            json.dump(
+                plan,
+                sys.stdout,
+                indent=2 if args.pretty else None,
+                sort_keys=True,
+            )
+            sys.stdout.write("\n")
+            return 0
+    except (CompareError, ConfigError, PlanError, ScanError) as exc:
         parser.exit(2, f"error: {exc}\n")
 
     parser.exit(2, "error: unknown command\n")
