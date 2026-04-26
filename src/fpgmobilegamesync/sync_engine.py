@@ -7,9 +7,15 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .executor import apply_plan_to_local_store, apply_plan_to_local_target
+from .executor import (
+    apply_plan_from_s3_to_local_target,
+    apply_plan_to_local_store,
+    apply_plan_to_local_target,
+    apply_plan_to_s3_store,
+)
 from .object_store import LocalObjectStore
 from .planner import build_plan
+from .s3_store import S3ObjectStore
 from .scanner import scan
 
 
@@ -126,6 +132,120 @@ def run_local_sync(
     return result
 
 
+def run_s3_sync(
+    config: dict[str, Any],
+    direction: str,
+    source_root: Path | None = None,
+    target_root: Path | None = None,
+    systems: list[str] | None = None,
+    types: list[str] | None = None,
+    apply: bool = False,
+    timestamp_utc: str | None = None,
+    allow_conflicts: bool = False,
+    report_dir: Path | None = None,
+    store: S3ObjectStore | None = None,
+) -> dict[str, Any]:
+    """Run source -> S3/Garage -> target sync on local device roots."""
+
+    runtime_config = copy.deepcopy(config)
+    source_device, target_device = _sync_devices(runtime_config, direction)
+    if source_root is not None:
+        runtime_config["devices"][source_device]["local"]["root"] = str(source_root)
+    if target_root is not None:
+        runtime_config["devices"][target_device]["local"]["root"] = str(target_root)
+
+    source_manifest = scan(
+        config=runtime_config,
+        device=source_device,
+        systems=systems,
+        types=types,
+    )
+    s3_store = store or S3ObjectStore.from_config(runtime_config)
+    store_manifest_before = s3_store.scan()
+    upload_plan = build_plan(
+        source=source_manifest,
+        target=store_manifest_before,
+        mode="upload",
+        source_name=source_device,
+        target_name="s3",
+    )
+
+    upload_apply = None
+    if apply:
+        upload_apply = apply_plan_to_s3_store(
+            plan=upload_plan,
+            config=runtime_config,
+            timestamp_utc=timestamp_utc,
+            allow_conflicts=allow_conflicts,
+            source_device=source_device,
+            store=s3_store,
+        )
+
+    store_manifest_after_upload = s3_store.scan()
+    target_manifest = scan(
+        config=runtime_config,
+        device=target_device,
+        systems=systems,
+        types=types,
+    )
+    download_plan = build_plan(
+        source=store_manifest_after_upload,
+        target=target_manifest,
+        mode="download",
+        source_name="s3",
+        target_name=target_device,
+    )
+
+    download_apply = None
+    if apply:
+        download_apply = _apply_s3_download_plan_to_device(
+            config=runtime_config,
+            plan=download_plan,
+            target_device=target_device,
+            timestamp_utc=timestamp_utc,
+            allow_conflicts=allow_conflicts,
+            store=s3_store,
+        )
+
+    result = {
+        "backend": "s3",
+        "direction": direction,
+        "dry_run": not apply,
+        "source_device": source_device,
+        "target_device": target_device,
+        "store": {
+            "backend": "s3",
+            "bucket": s3_store.bucket,
+            "prefix": s3_store.prefix,
+        },
+        "source_summary": source_manifest["summary"],
+        "store_summary_before_upload": store_manifest_before["summary"],
+        "upload_plan": upload_plan,
+        "upload_apply": upload_apply,
+        "store_summary_after_upload": store_manifest_after_upload["summary"],
+        "target_summary": target_manifest["summary"],
+        "download_plan": download_plan,
+        "download_apply": download_apply,
+    }
+    if report_dir is not None:
+        result["report_dir"] = str(report_dir)
+        result["report_files"] = _write_run_reports(
+            report_dir=report_dir,
+            artifacts={
+                "source-manifest.json": source_manifest,
+                "store-before-upload-manifest.json": store_manifest_before,
+                "upload-plan.json": upload_plan,
+                "upload-apply.json": upload_apply,
+                "store-after-upload-manifest.json": store_manifest_after_upload,
+                "target-manifest.json": target_manifest,
+                "download-plan.json": download_plan,
+                "download-apply.json": download_apply,
+                "summary.json": _summary_report(result),
+            },
+        )
+    return result
+
+
 def _apply_download_plan_to_device(
     config: dict[str, Any],
     plan: dict[str, Any],
@@ -154,6 +274,46 @@ def _apply_download_plan_to_device(
                     allow_conflicts=allow_conflicts,
                     config=config,
                     target_device=target_device,
+                ),
+            }
+        )
+
+    return {
+        "groups": applied_groups,
+        "summary": _combined_apply_summary(applied_groups),
+    }
+
+
+def _apply_s3_download_plan_to_device(
+    config: dict[str, Any],
+    plan: dict[str, Any],
+    target_device: str,
+    timestamp_utc: str | None,
+    allow_conflicts: bool,
+    store: S3ObjectStore,
+) -> dict[str, Any]:
+    groups: dict[Path, list[dict[str, Any]]] = {}
+    for action in plan["actions"]:
+        root = _target_content_root_for_action(config, target_device, action)
+        groups.setdefault(root, []).append(action)
+
+    trash_root = Path(config["devices"][target_device]["local"]["trash"])
+    applied_groups = []
+    for target_content_root, actions in sorted(groups.items(), key=lambda item: str(item[0])):
+        partial_plan = dict(plan)
+        partial_plan["actions"] = actions
+        applied_groups.append(
+            {
+                "target_root": str(target_content_root),
+                "result": apply_plan_from_s3_to_local_target(
+                    plan=partial_plan,
+                    config=config,
+                    target_root=target_content_root,
+                    trash_root=trash_root,
+                    timestamp_utc=timestamp_utc,
+                    allow_conflicts=allow_conflicts,
+                    target_device=target_device,
+                    store=store,
                 ),
             }
         )
@@ -244,13 +404,12 @@ def _write_run_reports(report_dir: Path, artifacts: dict[str, Any]) -> list[str]
 def _summary_report(result: dict[str, Any]) -> dict[str, Any]:
     upload_apply = result.get("upload_apply") or {}
     download_apply = result.get("download_apply") or {}
-    return {
+    summary = {
         "backend": result["backend"],
         "direction": result["direction"],
         "dry_run": result["dry_run"],
         "source_device": result["source_device"],
         "target_device": result["target_device"],
-        "store_root": result["store_root"],
         "source_summary": result["source_summary"],
         "store_summary_before_upload": result["store_summary_before_upload"],
         "upload_plan_summary": result["upload_plan"]["summary"],
@@ -260,3 +419,8 @@ def _summary_report(result: dict[str, Any]) -> dict[str, Any]:
         "download_plan_summary": result["download_plan"]["summary"],
         "download_apply_summary": download_apply.get("summary"),
     }
+    if "store_root" in result:
+        summary["store_root"] = result["store_root"]
+    if "store" in result:
+        summary["store"] = result["store"]
+    return summary

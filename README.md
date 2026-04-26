@@ -131,7 +131,7 @@ Plan operations are dry-run oriented and currently include:
 - `trash_local`
 - `conflict`
 
-## Full Local Sync Workflow
+## Full Sync Workflow
 
 The `sync` command runs the two required comparison/apply phases in order:
 
@@ -171,6 +171,20 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
   --pretty
 ```
 
+Use Garage/S3 directly by switching the backend. The S3 configuration is read
+from the main config file, so `--store-root` is only needed for `--backend local`:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
+  --direction mister-to-thor \
+  --backend s3 \
+  --report-dir /tmp/fpgms-runs/mister-to-thor-s3 \
+  --system gba \
+  --type saves \
+  --apply \
+  --pretty
+```
+
 For development, mounted shares, or a third controller device, override the
 configured source and target roots:
 
@@ -190,7 +204,8 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
 
 With the local backend, `--source-root` and `--target-root` may be real local
 paths, mounted network shares, or device filesystems exposed by another tool.
-The later SFTP/S3 backend will use the same source -> store -> target workflow.
+With the S3 backend, the same overrides let a third controller sync two mounted
+devices through Garage/S3.
 
 When `--report-dir` is provided, the command writes:
 

@@ -29,7 +29,7 @@ from .object_store import LocalObjectStore, ObjectStoreError
 from .planner import PlanError, build_plan
 from .s3_store import S3ObjectStore
 from .scanner import ScanError, scan
-from .sync_engine import SyncError, run_local_sync
+from .sync_engine import SyncError, run_local_sync, run_s3_sync
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -346,13 +346,12 @@ def build_parser() -> argparse.ArgumentParser:
     sync_parser.add_argument(
         "--backend",
         required=True,
-        choices=("local",),
-        help="Sync backend. The local backend uses a filesystem object-store.",
+        choices=("local", "s3"),
+        help="Sync backend. The local backend uses a filesystem object-store; s3 uses Garage/S3.",
     )
     sync_parser.add_argument(
         "--store-root",
-        required=True,
-        help="Local object-store root directory.",
+        help="Local object-store root directory. Required for --backend local.",
     )
     sync_parser.add_argument(
         "--source-root",
@@ -606,19 +605,37 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "sync":
             config = load_config(Path(args.config))
-            result = run_local_sync(
-                config=config,
-                direction=args.direction,
-                store_root=Path(args.store_root),
-                source_root=Path(args.source_root) if args.source_root else None,
-                target_root=Path(args.target_root) if args.target_root else None,
-                systems=args.system,
-                types=args.type,
-                apply=args.apply,
-                timestamp_utc=args.timestamp_utc,
-                allow_conflicts=args.allow_conflicts,
-                report_dir=Path(args.report_dir) if args.report_dir else None,
-            )
+            if args.backend == "local":
+                if not args.store_root:
+                    raise SyncError("--store-root is required for local sync")
+                result = run_local_sync(
+                    config=config,
+                    direction=args.direction,
+                    store_root=Path(args.store_root),
+                    source_root=Path(args.source_root) if args.source_root else None,
+                    target_root=Path(args.target_root) if args.target_root else None,
+                    systems=args.system,
+                    types=args.type,
+                    apply=args.apply,
+                    timestamp_utc=args.timestamp_utc,
+                    allow_conflicts=args.allow_conflicts,
+                    report_dir=Path(args.report_dir) if args.report_dir else None,
+                )
+            elif args.backend == "s3":
+                result = run_s3_sync(
+                    config=config,
+                    direction=args.direction,
+                    source_root=Path(args.source_root) if args.source_root else None,
+                    target_root=Path(args.target_root) if args.target_root else None,
+                    systems=args.system,
+                    types=args.type,
+                    apply=args.apply,
+                    timestamp_utc=args.timestamp_utc,
+                    allow_conflicts=args.allow_conflicts,
+                    report_dir=Path(args.report_dir) if args.report_dir else None,
+                )
+            else:
+                raise SyncError(f"unsupported sync backend: {args.backend}")
             json.dump(
                 result,
                 sys.stdout,
