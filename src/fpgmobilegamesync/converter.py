@@ -38,11 +38,7 @@ def infer_psx_retroarch_game_file(game_folder: Path) -> dict[str, Any]:
             "candidates": [str(path) for path in candidates],
         }
 
-    for strategy, pattern in [
-        ("cd_space_1", re.compile(r"(?i)(?:^|[^a-z0-9])cd\s+0?1(?:[^a-z0-9]|$)")),
-        ("cd1", re.compile(r"(?i)(?:^|[^a-z0-9])cd0?1(?:[^a-z0-9]|$)")),
-        ("isolated_1", re.compile(r"(?i)(?:^|[^a-z0-9])0?1(?:[^a-z0-9]|$)")),
-    ]:
+    for strategy, pattern in _psx_first_disc_patterns():
         matches = [path for path in candidates if pattern.search(path.stem)]
         if len(matches) == 1:
             return {
@@ -59,6 +55,17 @@ def infer_psx_retroarch_game_file(game_folder: Path) -> dict[str, Any]:
     raise ConversionError(
         f"cannot infer first PSX disc in {game_folder}; provide --retroarch-game-file"
     )
+
+
+def _psx_first_disc_patterns() -> list[tuple[str, re.Pattern[str]]]:
+    return [
+        ("disc_space_1", re.compile(r"(?i)(?:^|[^a-z0-9])disc\s+0?1(?:[^a-z0-9]|$)")),
+        ("disc1", re.compile(r"(?i)(?:^|[^a-z0-9])disc0?1(?:[^a-z0-9]|$)")),
+        ("one_of", re.compile(r"(?i)(?:^|[^a-z0-9])0?1\s+of(?:[^a-z0-9]|$)")),
+        ("cd_space_1", re.compile(r"(?i)(?:^|[^a-z0-9])cd\s+0?1(?:[^a-z0-9]|$)")),
+        ("cd1", re.compile(r"(?i)(?:^|[^a-z0-9])cd0?1(?:[^a-z0-9]|$)")),
+        ("isolated_1", re.compile(r"(?i)(?:^|[^a-z0-9])0?1(?:[^a-z0-9]|$)")),
+    ]
 
 
 def convert_save_file(

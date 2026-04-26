@@ -346,6 +346,9 @@ systems:
         thor_save_name_source: retroarch_game_file_stem
         infer_retroarch_game_file_when_missing: true
         first_disc_patterns:
+          - "Disc 1"
+          - "Disc1"
+          - "1 of"
           - "CD 1"
           - "CD1"
           - "isolated 1"

@@ -146,6 +146,42 @@ class ConverterTests(unittest.TestCase):
             self.assertEqual(result["strategy"], "cd_space_1")
             self.assertEqual(Path(result["path"]).name, "Final Fantasy IX CD 1.chd")
 
+    def test_psx_disc_patterns_win_before_cd_patterns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            game_folder = Path(tmp) / "Legend of Dragoon"
+            game_folder.mkdir()
+            (game_folder / "Legend of Dragoon CD 1.chd").write_bytes(b"fake")
+            (game_folder / "Legend of Dragoon Disc 1.chd").write_bytes(b"fake")
+
+            result = infer_psx_retroarch_game_file(game_folder)
+
+            self.assertEqual(result["strategy"], "disc_space_1")
+            self.assertEqual(Path(result["path"]).name, "Legend of Dragoon Disc 1.chd")
+
+    def test_psx_disc1_wins_before_one_of_and_cd_patterns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            game_folder = Path(tmp) / "Parasite Eve"
+            game_folder.mkdir()
+            (game_folder / "Parasite Eve 1 of 2.chd").write_bytes(b"fake")
+            (game_folder / "Parasite Eve Disc1.chd").write_bytes(b"fake")
+
+            result = infer_psx_retroarch_game_file(game_folder)
+
+            self.assertEqual(result["strategy"], "disc1")
+            self.assertEqual(Path(result["path"]).name, "Parasite Eve Disc1.chd")
+
+    def test_psx_one_of_wins_before_cd_patterns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            game_folder = Path(tmp) / "Lunar"
+            game_folder.mkdir()
+            (game_folder / "Lunar CD 1.chd").write_bytes(b"fake")
+            (game_folder / "Lunar 1 of 2.chd").write_bytes(b"fake")
+
+            result = infer_psx_retroarch_game_file(game_folder)
+
+            self.assertEqual(result["strategy"], "one_of")
+            self.assertEqual(Path(result["path"]).name, "Lunar 1 of 2.chd")
+
     def test_psx_infers_cd1_without_space(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             game_folder = Path(tmp) / "Chrono Cross"

@@ -270,9 +270,12 @@ If `--retroarch-game-file` is not provided but `--mister-game-folder` points to
 an accessible PSX folder, the converter tries to infer the game file:
 
 1. If there is only one `.iso`, `.bin`, `.chd`, `.cue`, or `.m3u`, use it.
-2. Otherwise, look for `CD 1`.
-3. Then look for `CD1`.
-4. Finally, look for an isolated `1`.
+2. Otherwise, look for `Disc 1`.
+3. Then look for `Disc1`.
+4. Then look for `1 of`.
+5. Then look for `CD 1`.
+6. Then look for `CD1`.
+7. Finally, look for an isolated `1`.
 
 If the first disc cannot be inferred unambiguously, conversion stops and asks
 for `--retroarch-game-file`.
