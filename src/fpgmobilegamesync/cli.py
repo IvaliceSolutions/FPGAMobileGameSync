@@ -31,7 +31,12 @@ from .planner import PlanError, build_plan
 from .remote_scanner import scan_remote
 from .s3_store import S3ObjectStore
 from .scanner import ScanError, scan
-from .script_generator import ScriptGenerationError, generate_env_template, generate_profile_scripts
+from .script_generator import (
+    ScriptGenerationError,
+    generate_env_template,
+    generate_launcher_bundle,
+    generate_profile_scripts,
+)
 from .sftp_client import SftpError
 from .sync_engine import SyncError, run_local_sync, run_s3_sync
 
@@ -509,6 +514,59 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Pretty-print JSON output.",
     )
+    scripts_bundle_parser = scripts_subparsers.add_parser(
+        "bundle",
+        help="Generate launcher scripts, an env template, and a README in one directory.",
+    )
+    scripts_bundle_parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Directory where the launcher bundle is written.",
+    )
+    scripts_bundle_parser.add_argument(
+        "--target",
+        choices=("thor", "mister", "third", "all"),
+        default="all",
+        help="Common launch point to generate. Defaults to all configured profiles.",
+    )
+    scripts_bundle_parser.add_argument(
+        "--profile",
+        action="append",
+        help="Profile to generate. Can be repeated. Overrides --target.",
+    )
+    scripts_bundle_parser.add_argument(
+        "--project-root",
+        help="Project root baked into the scripts. Defaults to the current directory.",
+    )
+    scripts_bundle_parser.add_argument(
+        "--config-path",
+        help="Config path baked into the scripts. Defaults to the global --config value.",
+    )
+    scripts_bundle_parser.add_argument(
+        "--python-bin",
+        default="python3",
+        help="Python command baked into the scripts. Defaults to python3.",
+    )
+    scripts_bundle_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Bake --apply into generated scripts.",
+    )
+    scripts_bundle_parser.add_argument(
+        "--pretty-output",
+        action="store_true",
+        help="Bake --pretty into generated scripts.",
+    )
+    scripts_bundle_parser.add_argument(
+        "--no-env",
+        action="store_true",
+        help="Do not generate fpgms.env.",
+    )
+    scripts_bundle_parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output.",
+    )
 
     sync_parser = subparsers.add_parser(
         "sync",
@@ -891,6 +949,28 @@ def main(argv: list[str] | None = None) -> int:
                 config=config,
                 output_path=Path(args.output),
                 include_launcher_vars=not args.no_launcher_vars,
+            )
+            json.dump(
+                result,
+                sys.stdout,
+                indent=2 if args.pretty else None,
+                sort_keys=True,
+            )
+            sys.stdout.write("\n")
+            return 0
+        if args.command == "scripts" and args.scripts_command == "bundle":
+            config = load_config(Path(args.config))
+            result = generate_launcher_bundle(
+                config=config,
+                output_dir=Path(args.output_dir),
+                target=args.target,
+                profiles=args.profile,
+                project_root=Path(args.project_root) if args.project_root else None,
+                config_path=Path(args.config_path) if args.config_path else Path(args.config),
+                python_bin=args.python_bin,
+                apply=args.apply,
+                pretty=args.pretty_output,
+                include_env=not args.no_env,
             )
             json.dump(
                 result,

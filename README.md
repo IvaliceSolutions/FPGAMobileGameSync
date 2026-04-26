@@ -329,6 +329,20 @@ The generated scripts also honor `FPGMS_PROJECT_ROOT`, `FPGMS_CONFIG`, and
 `FPGMS_PYTHON` environment variables when you need to move the repository or
 switch Python.
 
+Or generate a complete launcher bundle for a device in one command:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli scripts bundle \
+  --target thor \
+  --output-dir /tmp/fpgms-launchers \
+  --pretty
+```
+
+`--target thor` writes `thor-pull` and `thor-push`. `--target mister`
+writes the matching MiSTer launchers, `--target third` writes the two
+SFTP-to-SFTP controller launchers, and `--target all` writes every configured
+profile. The bundle also includes `fpgms.env` and `README.txt`.
+
 Generate a local environment template for the S3/SFTP variables referenced by
 the config:
 

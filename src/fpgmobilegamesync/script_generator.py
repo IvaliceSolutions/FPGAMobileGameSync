@@ -13,6 +13,13 @@ class ScriptGenerationError(Exception):
     """Raised when profile launch scripts cannot be generated."""
 
 
+PROFILE_GROUPS = {
+    "thor": ("thor-pull", "thor-push"),
+    "mister": ("mister-push", "mister-pull"),
+    "third": ("third-mister-to-thor", "third-thor-to-mister"),
+}
+
+
 def generate_profile_scripts(
     config: dict[str, Any],
     output_dir: Path,
@@ -69,6 +76,60 @@ def generate_profile_scripts(
         "scripts": scripts,
         "summary": {
             "script_count": len(scripts),
+        },
+    }
+
+
+def generate_launcher_bundle(
+    config: dict[str, Any],
+    output_dir: Path,
+    target: str = "all",
+    profiles: list[str] | None = None,
+    project_root: Path | None = None,
+    config_path: Path | None = None,
+    python_bin: str = "python3",
+    apply: bool = False,
+    pretty: bool = False,
+    include_env: bool = True,
+) -> dict[str, Any]:
+    selected_profiles = _select_bundle_profiles(config, target, profiles)
+    scripts = generate_profile_scripts(
+        config=config,
+        output_dir=output_dir,
+        profiles=selected_profiles,
+        project_root=project_root,
+        config_path=config_path,
+        python_bin=python_bin,
+        apply=apply,
+        pretty=pretty,
+    )
+    env_template = None
+    if include_env:
+        env_template = generate_env_template(
+            config=config,
+            output_path=output_dir / "fpgms.env",
+        )
+    readme_path = output_dir / "README.txt"
+    readme_path.write_text(
+        _render_bundle_readme(
+            profiles=selected_profiles,
+            include_env=include_env,
+            apply=apply,
+            pretty=pretty,
+        ),
+        encoding="utf-8",
+    )
+    return {
+        "status": "ok",
+        "target": target,
+        "output_dir": str(output_dir),
+        "scripts": scripts["scripts"],
+        "env_template": env_template,
+        "readme": str(readme_path),
+        "summary": {
+            "script_count": scripts["summary"]["script_count"],
+            "env_template": include_env,
+            "readme": True,
         },
     }
 
@@ -148,6 +209,68 @@ def _render_script(
             "",
         ]
     )
+
+
+def _select_bundle_profiles(
+    config: dict[str, Any],
+    target: str,
+    profiles: list[str] | None,
+) -> list[str]:
+    configured_profiles = config.get("sync_profiles", {})
+    if not isinstance(configured_profiles, dict) or not configured_profiles:
+        raise ScriptGenerationError("configuration has no sync_profiles")
+    if profiles:
+        return profiles
+    if target == "all":
+        return sorted(configured_profiles)
+    if target not in PROFILE_GROUPS:
+        valid = ", ".join(["all", *sorted(PROFILE_GROUPS)])
+        raise ScriptGenerationError(f"unknown launcher target {target!r}; expected one of: {valid}")
+    return list(PROFILE_GROUPS[target])
+
+
+def _render_bundle_readme(
+    profiles: list[str],
+    include_env: bool,
+    apply: bool,
+    pretty: bool,
+) -> str:
+    example_profile = _safe_filename(profiles[0]) if profiles else "profile"
+    example_args = ["--system gba", "--type saves"]
+    if not apply:
+        example_args.append("--apply")
+    if not pretty:
+        example_args.append("--pretty")
+    lines = [
+        "FPGAMobileGameSync launchers",
+        "============================",
+        "",
+    ]
+    if include_env:
+        lines.extend(
+            [
+                "1. Edit fpgms.env and fill local secrets.",
+                "2. Load the environment:",
+                "",
+                "   . ./fpgms.env",
+                "",
+                "3. Run a launcher:",
+            ]
+        )
+    else:
+        lines.append("Run a launcher:")
+    lines.extend(
+        [
+            "",
+            f"   ./fpgms-{example_profile}.sh {' '.join(example_args)}",
+            "",
+            "Generated profiles:",
+            *[f"- {profile}" for profile in profiles],
+            "",
+            "Extra CLI flags passed to a launcher are forwarded to the sync command.",
+        ]
+    )
+    return "\n".join(lines) + "\n"
 
 
 def _safe_filename(value: str) -> str:

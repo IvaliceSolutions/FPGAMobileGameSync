@@ -12,6 +12,7 @@ from pathlib import Path
 from fpgmobilegamesync.script_generator import (
     ScriptGenerationError,
     generate_env_template,
+    generate_launcher_bundle,
     generate_profile_scripts,
 )
 
@@ -68,6 +69,36 @@ class ScriptGeneratorTests(unittest.TestCase):
             self.assertIn('export MISTER_THOR_S3_ENDPOINT_URL=""', content)
             self.assertIn('export THOR_SYNC_SFTP_PRIVATE_KEY=""', content)
             self.assertNotIn("secret-value", content)
+
+    def test_generate_launcher_bundle_for_thor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output_dir = root / "bundle"
+
+            result = generate_launcher_bundle(
+                config=_config(),
+                output_dir=output_dir,
+                target="thor",
+                project_root=root,
+                config_path=Path("config.json"),
+                apply=True,
+                pretty=True,
+            )
+
+            pull_script = output_dir / "fpgms-thor-pull.sh"
+            push_script = output_dir / "fpgms-thor-push.sh"
+            env_path = output_dir / "fpgms.env"
+            readme_path = output_dir / "README.txt"
+            readme = readme_path.read_text(encoding="utf-8")
+            self.assertEqual(result["summary"]["script_count"], 2)
+            self.assertTrue(pull_script.exists())
+            self.assertTrue(push_script.exists())
+            self.assertTrue(os.access(pull_script, os.X_OK))
+            self.assertTrue(env_path.exists())
+            self.assertTrue(readme_path.exists())
+            self.assertIn("./fpgms-thor-pull.sh --system gba --type saves", readme)
+            self.assertIn("- thor-push", readme)
+            subprocess.run(["sh", "-n", str(pull_script)], check=True)
 
     def test_cli_scripts_generate_writes_selected_script(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -134,6 +165,42 @@ class ScriptGeneratorTests(unittest.TestCase):
             result = json.loads(completed.stdout)
             self.assertEqual(result["summary"]["env_count"], 9)
             self.assertTrue(output_path.exists())
+
+    def test_cli_scripts_bundle_writes_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "config.json"
+            output_dir = root / "bundle"
+            config_path.write_text(json.dumps(_config()), encoding="utf-8")
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "fpgmobilegamesync.cli",
+                    "--config",
+                    str(config_path),
+                    "scripts",
+                    "bundle",
+                    "--target",
+                    "thor",
+                    "--output-dir",
+                    str(output_dir),
+                    "--project-root",
+                    str(root),
+                    "--pretty",
+                ],
+                check=True,
+                cwd=Path.cwd(),
+                text=True,
+                capture_output=True,
+            )
+
+            result = json.loads(completed.stdout)
+            self.assertEqual(result["summary"]["script_count"], 2)
+            self.assertTrue((output_dir / "fpgms.env").exists())
+            self.assertTrue((output_dir / "README.txt").exists())
+            self.assertTrue((output_dir / "fpgms-thor-pull.sh").exists())
 
 
 def _config() -> dict:
