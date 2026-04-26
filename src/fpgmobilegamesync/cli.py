@@ -14,6 +14,7 @@ from .converter import (
     convert_save_file,
     expected_output_suffix,
     infer_psx_retroarch_game_file,
+    inspect_save_file,
     retroarch_game_file_stem,
 )
 from .executor import (
@@ -242,6 +243,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pretty-print JSON output.",
     )
 
+    inspect_parser = subparsers.add_parser(
+        "inspect-save",
+        help="Inspect one save file and report its detected format.",
+    )
+    inspect_parser.add_argument(
+        "--system",
+        required=True,
+        choices=("gba", "snes", "psx"),
+        help="System save format to inspect.",
+    )
+    inspect_parser.add_argument(
+        "--source",
+        required=True,
+        help="Source save file.",
+    )
+    inspect_parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output.",
+    )
+
     return parser
 
 
@@ -330,6 +352,8 @@ def main(argv: list[str] | None = None) -> int:
                     store_root=Path(args.store_root),
                     timestamp_utc=args.timestamp_utc,
                     allow_conflicts=args.allow_conflicts,
+                    config=config,
+                    source_device=str(plan.get("source", "source")),
                 )
             json.dump(
                 result,
@@ -377,6 +401,21 @@ def main(argv: list[str] | None = None) -> int:
                     else args.retroarch_game_file,
                     retroarch_inference=inferred_retroarch_game_file,
                 ),
+            )
+            json.dump(
+                result,
+                sys.stdout,
+                indent=2 if args.pretty else None,
+                sort_keys=True,
+            )
+            sys.stdout.write("\n")
+            return 0
+        if args.command == "inspect-save":
+            config = load_config(Path(args.config))
+            result = inspect_save_file(
+                config=config,
+                system=args.system,
+                source_path=Path(args.source),
             )
             json.dump(
                 result,

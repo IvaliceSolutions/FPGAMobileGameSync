@@ -253,6 +253,15 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli convert-save \
   --output /tmp/out
 ```
 
+Inspect a PSX save before conversion:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli inspect-save \
+  --system psx \
+  --source "/path/to/Final Fantasy 9 (FR).sav" \
+  --pretty
+```
+
 For PSX, keep both names in metadata:
 
 - `mister_game_folder`: the MiSTer folder containing the game files.
@@ -310,6 +319,13 @@ The extension may be omitted or unknown there too. The sync key remains based on
 This project assumes PSX saves are per-game files in your setup, not shared
 multi-game memory cards. A PSX save is therefore synchronized as one logical
 file per game instead of as individual internal memory-card blocks.
+
+PSX conversion is format-aware: the tool validates a 128 KiB raw PlayStation
+memory card, checks the `MC` header and system/directory frame checksums, then
+writes a target raw memory-card file with the native target name. For the
+MiSTer `.sav` and RetroArch/SwanStation `.srm` path currently targeted here, the
+payload is raw-compatible, but the conversion path still parses and validates
+the full card instead of blindly renaming.
 
 Names are compared case-insensitively for safety, but the source casing remains
 canonical. A case-only rename such as `pokemon.sav` -> `Pokemon.sav` is planned

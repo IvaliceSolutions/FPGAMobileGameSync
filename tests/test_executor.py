@@ -326,21 +326,119 @@ class ExecutorTests(unittest.TestCase):
 
             self.assertTrue((target_root / "Golden Sun.srm").exists())
             self.assertFalse((target_root / "Golden Sun.sav").exists())
+            self.assertEqual(
+                (target_root / "Golden Sun.srm").read_bytes(),
+                b"save",
+            )
+
+    def test_download_psx_save_runs_structural_conversion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store_root = root / "store"
+            target_root = root / "target"
+            store_saves = store_root / "systems/psx/saves"
+            store_saves.mkdir(parents=True)
+            target_root.mkdir()
+
+            source_file = store_saves / "Final Fantasy 9 (FR).sav"
+            source_file.write_bytes(_raw_psx_card())
+            plan = {
+                "mode": "download",
+                "source": "s3",
+                "target": "thor",
+                "actions": [
+                    {
+                        "operation": "download",
+                        "reason": "added",
+                        "source": _item(
+                            source_file,
+                            "Final Fantasy 9 (FR).sav",
+                            kind="saves",
+                            system="psx",
+                        ),
+                    }
+                ],
+            }
+            config = _config()
+            config["systems"]["psx"] = {
+                "save_conversion": {
+                    "strategy": "psx_raw_memory_card",
+                    "expected_raw_card_size": 131072,
+                    "mister_to_thor": {
+                        "accepted_input_extensions": [".sav"],
+                        "output_extension": ".srm",
+                        "validate_raw_card_size": True,
+                    },
+                    "thor_to_mister": {
+                        "accepted_input_extensions": [".srm", ".mcr", ".mcd"],
+                        "output_extension": ".sav",
+                        "validate_raw_card_size": True,
+                    },
+                }
+            }
+            config["save_mappings"] = {
+                "psx": [
+                    {
+                        "mister_game_folder": "Final Fantasy 9 (FR)",
+                        "retroarch_game_file": "Final Fantasy IX.chd",
+                    }
+                ]
+            }
+
+            result = apply_plan_to_local_target(
+                plan,
+                target_root=target_root,
+                config=config,
+            )
+
+            self.assertTrue((target_root / "Final Fantasy IX.srm").exists())
+            self.assertEqual(
+                (target_root / "Final Fantasy IX.srm").read_bytes(),
+                source_file.read_bytes(),
+            )
+            self.assertEqual(
+                result["applied"][0]["conversion"]["input_format"],
+                "raw_psx_memory_card",
+            )
 
 
-def _item(path: Path, content_path: str, kind: str = "games") -> dict:
+def _item(
+    path: Path,
+    content_path: str,
+    kind: str = "games",
+    system: str = "gba",
+) -> dict:
     return {
         "device": "test",
-        "system": "gba",
+        "system": system,
         "type": kind,
         "absolute_path": str(path),
         "relative_path": content_path,
         "content_path": content_path,
-        "sync_key": f"systems/gba/{kind}/{content_path}",
+        "sync_key": f"systems/{system}/{kind}/{content_path}",
         "size": path.stat().st_size if path.exists() else 0,
         "modified_ns": 1,
         "sha256": "test",
     }
+
+
+def _raw_psx_card() -> bytes:
+    data = bytearray(131072)
+    data[0:2] = b"MC"
+    for entry in range(15):
+        offset = (entry + 1) * 128
+        data[offset] = 0xA0
+    offset = 128
+    data[offset] = 0x51
+    data[offset + 4 : offset + 8] = (8192).to_bytes(4, byteorder="little")
+    data[offset + 10 : offset + 26] = b"BASCUS-00000SAVE"
+    for frame_index in range(16):
+        start = frame_index * 128
+        checksum = 0
+        for byte in data[start : start + 127]:
+            checksum ^= byte
+        data[start + 127] = checksum
+    return bytes(data)
 
 
 def _config() -> dict:

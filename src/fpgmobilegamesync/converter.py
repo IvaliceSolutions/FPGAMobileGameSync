@@ -7,6 +7,12 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .psx_memory_card import (
+    PsxMemoryCardError,
+    convert_psx_memory_card,
+    inspect_psx_memory_card,
+)
+
 
 class ConversionError(Exception):
     """Raised when a save file cannot be converted safely."""
@@ -120,12 +126,17 @@ def convert_save_file(
     if strategy == "psx_raw_memory_card":
         rules = conversion.get(direction_key, {})
         _validate_psx_memory_card(source_path, rules, conversion)
-        return _copy_save(
+        try:
+            conversion_result = convert_psx_memory_card(source_path, output_path)
+        except PsxMemoryCardError as exc:
+            raise ConversionError(str(exc)) from exc
+        return _converted_psx_result(
             strategy=strategy,
             source_path=source_path,
             output_path=output_path,
             direction=direction,
             metadata=metadata,
+            conversion_result=conversion_result,
         )
 
     raise ConversionError(f"unsupported save conversion strategy: {strategy}")
@@ -166,6 +177,43 @@ def _copy_save(
     return result
 
 
+def _converted_psx_result(
+    strategy: str,
+    source_path: Path,
+    output_path: Path,
+    direction: str,
+    metadata: dict[str, Any] | None,
+    conversion_result: dict[str, Any],
+) -> dict[str, Any]:
+    result = {
+        "strategy": strategy,
+        "direction": direction,
+        "source": str(source_path),
+        "output": str(output_path),
+        "size": output_path.stat().st_size,
+        "input_format": conversion_result["input_format"],
+        "output_format": conversion_result["output_format"],
+        "canonical_format": conversion_result["canonical_format"],
+        "canonical_sha256": conversion_result["canonical_sha256"],
+        "canonical_size": conversion_result["canonical_size"],
+        "structural_validation": {
+            "header_valid": conversion_result["structural_validation"]["header_valid"],
+            "system_frame_checksums_valid": conversion_result[
+                "structural_validation"
+            ]["system_frame_checksums_valid"],
+            "used_entry_count": conversion_result["structural_validation"][
+                "used_entry_count"
+            ],
+            "used_block_count": conversion_result["structural_validation"][
+                "used_block_count"
+            ],
+        },
+    }
+    if metadata:
+        result["metadata"] = metadata
+    return result
+
+
 def _validate_raw_same_content(source_path: Path, rules: dict[str, Any]) -> None:
     allowed_inputs = _as_list(rules.get("rename_extension_from"))
     _validate_extension(source_path, allowed_inputs)
@@ -191,6 +239,26 @@ def _validate_psx_memory_card(
                 f"unexpected PSX memory card size for {source_path.name}: "
                 f"{actual}; expected {expected}"
             )
+
+
+def inspect_save_file(config: dict[str, Any], system: str, source_path: Path) -> dict[str, Any]:
+    if system not in config.get("systems", {}):
+        raise ConversionError(f"unknown system: {system}")
+    strategy = config["systems"][system].get("save_conversion", {}).get("strategy")
+    if strategy == "psx_raw_memory_card":
+        try:
+            return inspect_psx_memory_card(source_path)
+        except PsxMemoryCardError as exc:
+            raise ConversionError(str(exc)) from exc
+    if not source_path.exists():
+        raise ConversionError(f"source save not found: {source_path}")
+    if not source_path.is_file():
+        raise ConversionError(f"source save is not a file: {source_path}")
+    return {
+        "path": str(source_path),
+        "format": strategy or "unknown",
+        "size": source_path.stat().st_size,
+    }
 
 
 def _validate_extension(source_path: Path, allowed: list[str]) -> None:

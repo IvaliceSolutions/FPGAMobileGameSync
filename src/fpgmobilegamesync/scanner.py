@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from .psx_memory_card import PsxMemoryCardError, canonical_psx_memory_card_bytes
 from .save_paths import canonical_save_content_path, is_convertible_save
 
 
@@ -173,6 +174,13 @@ def _scan_file(
             device=device,
             native_content_path=native_content_path,
         )
+        if system == "psx":
+            try:
+                canonical_bytes = canonical_psx_memory_card_bytes(path)
+            except PsxMemoryCardError as exc:
+                raise ScanError(str(exc)) from exc
+            canonical_size = len(canonical_bytes)
+            canonical_sha256 = hashlib.sha256(canonical_bytes).hexdigest()
     return ScanItem(
         device=device,
         system=system,

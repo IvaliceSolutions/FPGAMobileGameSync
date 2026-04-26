@@ -75,7 +75,7 @@ class ConverterTests(unittest.TestCase):
             mister_game_folder.mkdir(parents=True)
             retroarch_game_file.parent.mkdir(parents=True)
             retroarch_game_file.write_bytes(b"fake chd")
-            source.write_bytes(b"x" * 131072)
+            source.write_bytes(_raw_psx_card())
 
             output = _resolve_save_output_path(
                 self.config,
@@ -106,6 +106,9 @@ class ConverterTests(unittest.TestCase):
 
             self.assertEqual(output.name, "Final Fantasy IX.srm")
             self.assertEqual(result["size"], 131072)
+            self.assertEqual(result["input_format"], "raw_psx_memory_card")
+            self.assertEqual(result["output_format"], "raw_psx_memory_card")
+            self.assertTrue(result["structural_validation"]["header_valid"])
             self.assertEqual(
                 result["metadata"]["mister_game_folder"],
                 str(mister_game_folder),
@@ -121,7 +124,7 @@ class ConverterTests(unittest.TestCase):
             source = root / "Final Fantasy 9 (FR).sav"
             output_dir = root / "out"
             output_dir.mkdir()
-            source.write_bytes(b"x" * 131072)
+            source.write_bytes(_raw_psx_card())
 
             output = _resolve_save_output_path(
                 self.config,
@@ -267,6 +270,24 @@ class ConverterTests(unittest.TestCase):
                 metadata["retroarch_game_file_inference"]["strategy"],
                 "cd_space_1",
             )
+
+def _raw_psx_card() -> bytes:
+    data = bytearray(131072)
+    data[0:2] = b"MC"
+    for entry in range(15):
+        offset = (entry + 1) * 128
+        data[offset] = 0xA0
+    offset = 128
+    data[offset] = 0x51
+    data[offset + 4 : offset + 8] = (8192).to_bytes(4, byteorder="little")
+    data[offset + 10 : offset + 26] = b"BASCUS-00000SAVE"
+    for frame_index in range(16):
+        start = frame_index * 128
+        checksum = 0
+        for byte in data[start : start + 127]:
+            checksum ^= byte
+        data[start + 127] = checksum
+    return bytes(data)
 
 
 if __name__ == "__main__":

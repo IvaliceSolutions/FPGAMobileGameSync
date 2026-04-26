@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import shutil
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Any
 
+from .converter import ConversionError, convert_save_file
 from .object_store import LocalObjectStore
 from .save_paths import is_convertible_save, native_save_content_path
 
@@ -31,8 +33,11 @@ def apply_plan_to_local_store(
     store_root: Path,
     timestamp_utc: str | None = None,
     allow_conflicts: bool = False,
+    config: dict[str, Any] | None = None,
+    source_device: str | None = None,
 ) -> dict[str, Any]:
     store = LocalObjectStore(store_root)
+    source_device = source_device or str(plan.get("source", "source"))
     applied: list[dict[str, Any]] = []
 
     for action in plan["actions"]:
@@ -40,9 +45,11 @@ def apply_plan_to_local_store(
             _apply_action(
                 store=store,
                 action=action,
-                origin_device=str(plan.get("source", "source")),
+                origin_device=source_device,
                 timestamp_utc=timestamp_utc,
                 allow_conflicts=allow_conflicts,
+                config=config,
+                source_device=source_device,
             )
         )
 
@@ -100,6 +107,8 @@ def _apply_action(
     origin_device: str,
     timestamp_utc: str | None,
     allow_conflicts: bool,
+    config: dict[str, Any] | None,
+    source_device: str,
 ) -> dict[str, Any]:
     operation = action["operation"]
 
@@ -110,7 +119,7 @@ def _apply_action(
             raise ApplyError("plan contains conflicts; refusing to apply")
         return {"operation": operation, "status": "skipped", "reason": action["reason"]}
     if operation == "upload":
-        return _upload(store, action, origin_device, timestamp_utc)
+        return _upload(store, action, origin_device, timestamp_utc, config, source_device)
     if operation == "rename_remote":
         return _rename_remote(store, action)
     if operation == "trash_remote":
@@ -160,6 +169,8 @@ def _upload(
     action: dict[str, Any],
     origin_device: str,
     timestamp_utc: str | None,
+    config: dict[str, Any] | None,
+    source_device: str,
 ) -> dict[str, Any]:
     source = action["source"]
     source_path = Path(source["absolute_path"])
@@ -181,7 +192,20 @@ def _upload(
         and store.object_exists(existing_target_key)
     ):
         store.rename_object(existing_target_key, target_key)
-    store.put_file(source_path, target_key)
+    conversion_result = None
+    if _should_convert_for_store(source, config, source_device):
+        with tempfile.TemporaryDirectory() as tmp:
+            converted_path = Path(tmp) / Path(target_key).name
+            conversion_result = _convert_save(
+                config=config,
+                system=source["system"],
+                direction="thor-to-mister",
+                source_path=source_path,
+                output_path=converted_path,
+            )
+            store.put_file(converted_path, target_key)
+    else:
+        store.put_file(source_path, target_key)
 
     result = {
         "operation": "upload",
@@ -190,6 +214,8 @@ def _upload(
     }
     if backup_key is not None:
         result["backup_key"] = backup_key
+    if conversion_result is not None:
+        result["conversion"] = _conversion_summary(conversion_result)
     return result
 
 
@@ -225,7 +251,17 @@ def _download(
     ):
         _rename_path_case_aware(existing_target_path, target_path)
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source_path, target_path)
+    conversion_result = None
+    if _should_convert_for_target(source, config, target_device):
+        conversion_result = _convert_save(
+            config=config,
+            system=source["system"],
+            direction="mister-to-thor",
+            source_path=source_path,
+            output_path=target_path,
+        )
+    else:
+        shutil.copy2(source_path, target_path)
 
     result = {
         "operation": "download",
@@ -234,6 +270,8 @@ def _download(
     }
     if backup_path is not None:
         result["backup_path"] = str(backup_path)
+    if conversion_result is not None:
+        result["conversion"] = _conversion_summary(conversion_result)
     return result
 
 
@@ -398,6 +436,55 @@ def _use_native_save_path(
         system=item["system"],
         content_type=item["type"],
     )
+
+
+def _should_convert_for_target(
+    item: dict[str, Any],
+    config: dict[str, Any] | None,
+    target_device: str,
+) -> bool:
+    return target_device == "thor" and _use_native_save_path(item, config, target_device)
+
+
+def _should_convert_for_store(
+    item: dict[str, Any],
+    config: dict[str, Any] | None,
+    source_device: str,
+) -> bool:
+    return source_device == "thor" and _use_native_save_path(item, config, source_device)
+
+
+def _convert_save(
+    config: dict[str, Any] | None,
+    system: str,
+    direction: str,
+    source_path: Path,
+    output_path: Path,
+) -> dict[str, Any]:
+    if config is None:
+        raise ApplyError("save conversion requires config")
+    try:
+        return convert_save_file(
+            config=config,
+            system=system,
+            direction=direction,
+            source_path=source_path,
+            output_path=output_path,
+        )
+    except ConversionError as exc:
+        raise ApplyError(str(exc)) from exc
+
+
+def _conversion_summary(result: dict[str, Any]) -> dict[str, Any]:
+    summary = {
+        "strategy": result["strategy"],
+        "direction": result["direction"],
+        "size": result["size"],
+    }
+    for key in ("input_format", "output_format", "canonical_format", "canonical_sha256"):
+        if key in result:
+            summary[key] = result[key]
+    return summary
 
 
 def _rename_path_case_aware(old_path: Path, new_path: Path) -> None:
