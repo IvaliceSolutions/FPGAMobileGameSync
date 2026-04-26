@@ -26,6 +26,7 @@ from .executor import (
 from .object_store import LocalObjectStore, ObjectStoreError
 from .planner import PlanError, build_plan
 from .scanner import ScanError, scan
+from .sync_engine import SyncError, run_local_sync
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -264,6 +265,67 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pretty-print JSON output.",
     )
 
+    sync_parser = subparsers.add_parser(
+        "sync",
+        help="Run a full source -> store -> target sync workflow.",
+    )
+    sync_parser.add_argument(
+        "--direction",
+        required=True,
+        choices=("mister-to-thor", "thor-to-mister"),
+        help="Configured sync direction to run.",
+    )
+    sync_parser.add_argument(
+        "--backend",
+        required=True,
+        choices=("local",),
+        help="Sync backend. The local backend uses a filesystem object-store.",
+    )
+    sync_parser.add_argument(
+        "--store-root",
+        required=True,
+        help="Local object-store root directory.",
+    )
+    sync_parser.add_argument(
+        "--source-root",
+        help="Override the configured source device root.",
+    )
+    sync_parser.add_argument(
+        "--target-root",
+        help="Override the configured target device root.",
+    )
+    sync_parser.add_argument(
+        "--system",
+        action="append",
+        choices=("gba", "snes", "psx"),
+        help="System to sync. Can be repeated. Defaults to all configured systems.",
+    )
+    sync_parser.add_argument(
+        "--type",
+        action="append",
+        choices=("games", "saves", "bios", "thumbnails"),
+        help="Content type to sync. Can be repeated. Defaults to all configured types.",
+    )
+    sync_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply the generated plans. Without this flag the command is a dry run.",
+    )
+    sync_parser.add_argument(
+        "--timestamp-utc",
+        help="Fixed UTC timestamp for deterministic trash/backup paths.",
+    )
+    sync_parser.add_argument(
+        "--allow-conflicts",
+        action="store_true",
+        help="Skip conflict actions instead of refusing the plan during apply.",
+    )
+    sync_parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output.",
+    )
+
     return parser
 
 
@@ -425,6 +487,28 @@ def main(argv: list[str] | None = None) -> int:
             )
             sys.stdout.write("\n")
             return 0
+        if args.command == "sync":
+            config = load_config(Path(args.config))
+            result = run_local_sync(
+                config=config,
+                direction=args.direction,
+                store_root=Path(args.store_root),
+                source_root=Path(args.source_root) if args.source_root else None,
+                target_root=Path(args.target_root) if args.target_root else None,
+                systems=args.system,
+                types=args.type,
+                apply=args.apply,
+                timestamp_utc=args.timestamp_utc,
+                allow_conflicts=args.allow_conflicts,
+            )
+            json.dump(
+                result,
+                sys.stdout,
+                indent=2 if args.pretty else None,
+                sort_keys=True,
+            )
+            sys.stdout.write("\n")
+            return 0
     except (
         ApplyError,
         CompareError,
@@ -433,6 +517,7 @@ def main(argv: list[str] | None = None) -> int:
         ObjectStoreError,
         PlanError,
         ScanError,
+        SyncError,
     ) as exc:
         parser.exit(2, f"error: {exc}\n")
 

@@ -131,6 +131,64 @@ Plan operations are dry-run oriented and currently include:
 - `trash_local`
 - `conflict`
 
+## Full Local Sync Workflow
+
+The `sync` command runs the two required comparison/apply phases in order:
+
+1. scan source
+2. scan S3/store
+3. plan source -> S3/store
+4. optionally apply source -> S3/store
+5. rescan S3/store
+6. scan target
+7. plan S3/store -> target
+8. optionally apply S3/store -> target
+
+The command is dry-run by default:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
+  --direction mister-to-thor \
+  --backend local \
+  --store-root /tmp/fpgms-store \
+  --system gba \
+  --type saves \
+  --pretty
+```
+
+Add `--apply` to write changes:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
+  --direction mister-to-thor \
+  --backend local \
+  --store-root /tmp/fpgms-store \
+  --system gba \
+  --type saves \
+  --apply \
+  --pretty
+```
+
+For development, mounted shares, or a third controller device, override the
+configured source and target roots:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
+  --direction thor-to-mister \
+  --backend local \
+  --store-root /tmp/fpgms-store \
+  --source-root /Volumes/thor-storage \
+  --target-root /Volumes/mister-fat \
+  --system gba \
+  --type saves \
+  --apply \
+  --pretty
+```
+
+With the local backend, `--source-root` and `--target-root` may be real local
+paths, mounted network shares, or device filesystems exposed by another tool.
+The later SFTP/S3 backend will use the same source -> store -> target workflow.
+
 ## Local Object Store
 
 A filesystem-backed object store is available to simulate the future S3/Garage
