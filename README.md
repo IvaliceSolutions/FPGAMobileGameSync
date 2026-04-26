@@ -329,6 +329,23 @@ The generated scripts also honor `FPGMS_PROJECT_ROOT`, `FPGMS_CONFIG`, and
 `FPGMS_PYTHON` environment variables when you need to move the repository or
 switch Python.
 
+Generate a local environment template for the S3/SFTP variables referenced by
+the config:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli scripts env-template \
+  --output /tmp/fpgms-launchers/fpgms.env \
+  --pretty
+```
+
+The template contains empty `export ...=""` assignments only. Fill it locally,
+keep it out of git, then source it before launching a sync:
+
+```sh
+. /tmp/fpgms-launchers/fpgms.env
+/tmp/fpgms-launchers/fpgms-thor-pull.sh --system gba --type saves --apply
+```
+
 For development, mounted shares, or a third controller device, override the
 configured source and target roots:
 

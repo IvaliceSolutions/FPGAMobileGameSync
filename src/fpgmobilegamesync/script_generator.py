@@ -73,6 +73,43 @@ def generate_profile_scripts(
     }
 
 
+def generate_env_template(
+    config: dict[str, Any],
+    output_path: Path,
+    include_launcher_vars: bool = True,
+) -> dict[str, Any]:
+    env_names = _collect_env_names(config)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# FPGAMobileGameSync environment template.",
+        "# Fill the values locally; do not commit secrets.",
+        "",
+    ]
+    if include_launcher_vars:
+        lines.extend(
+            [
+                "# Optional launcher overrides.",
+                'export FPGMS_PROJECT_ROOT=""',
+                'export FPGMS_CONFIG=""',
+                'export FPGMS_PYTHON=""',
+                "",
+            ]
+        )
+    if env_names:
+        lines.append("# S3 and SFTP credentials referenced by the sync config.")
+        lines.extend(f'export {name}=""' for name in env_names)
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {
+        "status": "ok",
+        "path": str(output_path),
+        "env": env_names,
+        "summary": {
+            "env_count": len(env_names),
+            "launcher_env_count": 3 if include_launcher_vars else 0,
+        },
+    }
+
+
 def _render_script(
     profile: str,
     project_root: Path,
@@ -116,3 +153,27 @@ def _render_script(
 def _safe_filename(value: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip())
     return safe.strip(".-") or "profile"
+
+
+def _collect_env_names(config: dict[str, Any]) -> list[str]:
+    names: set[str] = set()
+    s3 = config.get("s3", {})
+    if isinstance(s3, dict):
+        for key in ("endpoint_url_env", "access_key_id_env", "secret_access_key_env"):
+            _add_env_name(names, s3.get(key))
+    devices = config.get("devices", {})
+    if isinstance(devices, dict):
+        for device in devices.values():
+            if not isinstance(device, dict):
+                continue
+            remote = device.get("remote", {})
+            if not isinstance(remote, dict):
+                continue
+            for key in ("username_env", "password_env", "private_key_env"):
+                _add_env_name(names, remote.get(key))
+    return sorted(names)
+
+
+def _add_env_name(names: set[str], value: object) -> None:
+    if isinstance(value, str) and value:
+        names.add(value)

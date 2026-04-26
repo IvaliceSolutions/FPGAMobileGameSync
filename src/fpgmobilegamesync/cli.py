@@ -31,7 +31,7 @@ from .planner import PlanError, build_plan
 from .remote_scanner import scan_remote
 from .s3_store import S3ObjectStore
 from .scanner import ScanError, scan
-from .script_generator import ScriptGenerationError, generate_profile_scripts
+from .script_generator import ScriptGenerationError, generate_env_template, generate_profile_scripts
 from .sftp_client import SftpError
 from .sync_engine import SyncError, run_local_sync, run_s3_sync
 
@@ -490,6 +490,25 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Pretty-print JSON output.",
     )
+    scripts_env_parser = scripts_subparsers.add_parser(
+        "env-template",
+        help="Generate a shell environment template for required secrets.",
+    )
+    scripts_env_parser.add_argument(
+        "--output",
+        required=True,
+        help="Path to the environment template to write.",
+    )
+    scripts_env_parser.add_argument(
+        "--no-launcher-vars",
+        action="store_true",
+        help="Do not include FPGMS_PROJECT_ROOT/FPGMS_CONFIG/FPGMS_PYTHON placeholders.",
+    )
+    scripts_env_parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output.",
+    )
 
     sync_parser = subparsers.add_parser(
         "sync",
@@ -857,6 +876,21 @@ def main(argv: list[str] | None = None) -> int:
                 python_bin=args.python_bin,
                 apply=args.apply,
                 pretty=args.pretty_output,
+            )
+            json.dump(
+                result,
+                sys.stdout,
+                indent=2 if args.pretty else None,
+                sort_keys=True,
+            )
+            sys.stdout.write("\n")
+            return 0
+        if args.command == "scripts" and args.scripts_command == "env-template":
+            config = load_config(Path(args.config))
+            result = generate_env_template(
+                config=config,
+                output_path=Path(args.output),
+                include_launcher_vars=not args.no_launcher_vars,
             )
             json.dump(
                 result,
