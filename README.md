@@ -287,6 +287,27 @@ Use the opposite pairing when running on MiSTer: `--source-backend local
 --target-backend sftp` for `mister-to-thor`, and `--source-backend sftp
 --target-backend local` for `thor-to-mister`.
 
+The bundled config also defines named profiles for these common launch points.
+Profile values can still be overridden by explicit CLI flags:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
+  --profile thor-pull \
+  --system gba \
+  --type saves \
+  --apply \
+  --pretty
+```
+
+Available profiles:
+
+- `thor-pull`: run on Thor, pull MiSTer -> Thor.
+- `thor-push`: run on Thor, push Thor -> MiSTer.
+- `mister-push`: run on MiSTer, push MiSTer -> Thor.
+- `mister-pull`: run on MiSTer, pull Thor -> MiSTer.
+- `third-mister-to-thor`: run on another device, sync MiSTer -> Thor over SFTP.
+- `third-thor-to-mister`: run on another device, sync Thor -> MiSTer over SFTP.
+
 For development, mounted shares, or a third controller device, override the
 configured source and target roots:
 

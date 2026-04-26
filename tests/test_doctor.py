@@ -102,6 +102,36 @@ class DoctorTests(unittest.TestCase):
                 any(check["code"] == "device_root_missing" for check in result["checks"])
             )
 
+    def test_doctor_validates_sync_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(Path(tmp))
+            config["sync_profiles"] = {
+                "bad-profile": {
+                    "direction": "missing-direction",
+                    "backend": "ftp",
+                    "source_backend": "adb",
+                    "systems": ["unknown-system"],
+                    "types": ["unknown-type"],
+                }
+            }
+
+            result = run_doctor(config=config)
+
+            self.assertEqual(result["status"], "error")
+            self.assertEqual(
+                {
+                    check["code"]
+                    for check in result["checks"]
+                    if check["code"].startswith("invalid_sync_profile")
+                },
+                {
+                    "invalid_sync_profile_direction",
+                    "invalid_sync_profile_backend",
+                    "invalid_sync_profile_device_backend",
+                    "invalid_sync_profile_list_value",
+                },
+            )
+
     def test_cli_doctor_returns_non_zero_on_errors(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -444,21 +444,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run a full source -> store -> target sync workflow.",
     )
     sync_parser.add_argument(
+        "--profile",
+        help="Named sync profile from the configuration. CLI flags override profile values.",
+    )
+    sync_parser.add_argument(
         "--direction",
-        required=True,
         choices=("mister-to-thor", "thor-to-mister"),
         help="Configured sync direction to run.",
     )
     sync_parser.add_argument(
         "--backend",
-        required=True,
         choices=("local", "s3"),
         help="Sync backend. The local backend uses a filesystem object-store; s3 uses Garage/S3.",
     )
     sync_parser.add_argument(
         "--scan-backend",
         choices=("local", "sftp"),
-        default="local",
         help="Device scan/apply backend for sync. Use sftp from a third controller device.",
     )
     sync_parser.add_argument(
@@ -501,6 +502,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Apply the generated plans. Without this flag the command is a dry run.",
     )
     sync_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Force dry-run mode even if the selected profile has apply=true.",
+    )
+    sync_parser.add_argument(
         "--timestamp-utc",
         help="Fixed UTC timestamp for deterministic trash/backup paths.",
     )
@@ -521,7 +527,6 @@ def build_parser() -> argparse.ArgumentParser:
     sync_parser.add_argument(
         "--lock-ttl-seconds",
         type=int,
-        default=1800,
         help="S3 sync lock TTL in seconds. Defaults to 1800.",
     )
     sync_parser.add_argument(
@@ -791,47 +796,81 @@ def main(argv: list[str] | None = None) -> int:
             return 1 if result["status"] == "error" else 0
         if args.command == "sync":
             config = load_config(Path(args.config))
-            source_backend = args.source_backend or args.scan_backend
-            target_backend = args.target_backend or args.scan_backend
-            if args.backend == "local":
+            profile = _sync_profile_from_args(config, args.profile)
+            direction = _sync_option(args.direction, profile, "direction")
+            backend = _sync_option(args.backend, profile, "backend")
+            scan_backend = _sync_option(args.scan_backend, profile, "scan_backend", "local")
+            source_backend = _sync_option(
+                args.source_backend,
+                profile,
+                "source_backend",
+                scan_backend,
+            )
+            target_backend = _sync_option(
+                args.target_backend,
+                profile,
+                "target_backend",
+                scan_backend,
+            )
+            store_root = _sync_option(args.store_root, profile, "store_root")
+            source_root = _sync_option(args.source_root, profile, "source_root")
+            target_root = _sync_option(args.target_root, profile, "target_root")
+            systems = _sync_list_option(args.system, profile, "systems")
+            types = _sync_list_option(args.type, profile, "types")
+            apply_changes = _sync_apply_option(args, profile)
+            report_dir = _sync_option(args.report_dir, profile, "report_dir")
+            timestamp_utc = _sync_option(args.timestamp_utc, profile, "timestamp_utc")
+            allow_conflicts = bool(args.allow_conflicts or profile.get("allow_conflicts", False))
+            no_lock = bool(args.no_lock or profile.get("no_lock", False))
+            lock_ttl_seconds = int(
+                _sync_option(args.lock_ttl_seconds, profile, "lock_ttl_seconds", 1800)
+            )
+            lock_owner = _sync_option(args.lock_owner, profile, "lock_owner")
+            if direction is None:
+                raise SyncError("--direction is required unless provided by --profile")
+            if backend is None:
+                raise SyncError("--backend is required unless provided by --profile")
+            if backend == "local":
                 if source_backend != "local" or target_backend != "local":
                     raise SyncError("SFTP device backends require --backend s3")
-                if not args.store_root:
+                if not store_root:
                     raise SyncError("--store-root is required for local sync")
                 result = run_local_sync(
                     config=config,
-                    direction=args.direction,
-                    store_root=Path(args.store_root),
-                    source_root=Path(args.source_root) if args.source_root else None,
-                    target_root=Path(args.target_root) if args.target_root else None,
-                    systems=args.system,
-                    types=args.type,
-                    apply=args.apply,
-                    timestamp_utc=args.timestamp_utc,
-                    allow_conflicts=args.allow_conflicts,
-                    report_dir=Path(args.report_dir) if args.report_dir else None,
+                    direction=direction,
+                    store_root=Path(store_root),
+                    source_root=Path(source_root) if source_root else None,
+                    target_root=Path(target_root) if target_root else None,
+                    systems=systems,
+                    types=types,
+                    apply=apply_changes,
+                    timestamp_utc=timestamp_utc,
+                    allow_conflicts=allow_conflicts,
+                    report_dir=Path(report_dir) if report_dir else None,
                 )
-            elif args.backend == "s3":
+            elif backend == "s3":
                 result = run_s3_sync(
                     config=config,
-                    direction=args.direction,
-                    source_root=Path(args.source_root) if args.source_root else None,
-                    target_root=Path(args.target_root) if args.target_root else None,
-                    systems=args.system,
-                    types=args.type,
-                    apply=args.apply,
-                    timestamp_utc=args.timestamp_utc,
-                    allow_conflicts=args.allow_conflicts,
-                    report_dir=Path(args.report_dir) if args.report_dir else None,
-                    scan_backend=args.scan_backend,
-                    use_lock=not args.no_lock,
-                    lock_ttl_seconds=args.lock_ttl_seconds,
-                    lock_owner=args.lock_owner,
+                    direction=direction,
+                    source_root=Path(source_root) if source_root else None,
+                    target_root=Path(target_root) if target_root else None,
+                    systems=systems,
+                    types=types,
+                    apply=apply_changes,
+                    timestamp_utc=timestamp_utc,
+                    allow_conflicts=allow_conflicts,
+                    report_dir=Path(report_dir) if report_dir else None,
+                    scan_backend=scan_backend,
+                    use_lock=not no_lock,
+                    lock_ttl_seconds=lock_ttl_seconds,
+                    lock_owner=lock_owner,
                     source_scan_backend=source_backend,
                     target_scan_backend=target_backend,
                 )
             else:
-                raise SyncError(f"unsupported sync backend: {args.backend}")
+                raise SyncError(f"unsupported sync backend: {backend}")
+            if args.profile:
+                result["profile"] = args.profile
             json.dump(
                 result,
                 sys.stdout,
@@ -931,6 +970,49 @@ def _store_from_args(args: argparse.Namespace, config: dict) -> LocalObjectStore
     if backend == "s3":
         return S3ObjectStore.from_config(config)
     raise ObjectStoreError(f"unsupported store backend: {backend}")
+
+
+def _sync_profile_from_args(config: dict, name: str | None) -> dict:
+    if not name:
+        return {}
+    profiles = config.get("sync_profiles", {})
+    if not isinstance(profiles, dict):
+        raise SyncError("sync_profiles must be an object")
+    profile = profiles.get(name)
+    if profile is None:
+        raise SyncError(f"unknown sync profile: {name}")
+    if not isinstance(profile, dict):
+        raise SyncError(f"sync profile must be an object: {name}")
+    return profile
+
+
+def _sync_option(value: object, profile: dict, key: str, default: object = None) -> object:
+    if value is not None:
+        return value
+    return profile.get(key, default)
+
+
+def _sync_list_option(value: list[str] | None, profile: dict, key: str) -> list[str] | None:
+    if value is not None:
+        return value
+    profile_value = profile.get(key)
+    if profile_value is None:
+        return None
+    if not isinstance(profile_value, list) or not all(
+        isinstance(item, str) for item in profile_value
+    ):
+        raise SyncError(f"sync profile {key} must be a list of strings")
+    return list(profile_value)
+
+
+def _sync_apply_option(args: argparse.Namespace, profile: dict) -> bool:
+    if args.apply and args.dry_run:
+        raise SyncError("--apply and --dry-run cannot be used together")
+    if args.apply:
+        return True
+    if args.dry_run:
+        return False
+    return bool(profile.get("apply", False))
 
 
 if __name__ == "__main__":

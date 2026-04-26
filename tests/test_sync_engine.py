@@ -109,6 +109,98 @@ class SyncEngineTests(unittest.TestCase):
             self.assertTrue((root / "reports/dry-run/upload-plan.json").exists())
             self.assertFalse((root / "reports/dry-run/upload-apply.json").exists())
 
+    def test_cli_sync_profile_supplies_repeated_options(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mister_root = root / "mister"
+            thor_root = root / "thor"
+            store_root = root / "store"
+            (mister_root / "saves/GBA").mkdir(parents=True)
+            (thor_root / "RetroArch/saves/GBA").mkdir(parents=True)
+            (mister_root / "saves/GBA/Advance Wars.sav").write_bytes(b"save")
+            config = _config(mister_root, thor_root)
+            config["sync_profiles"] = {
+                "local-gba-saves": {
+                    "direction": "mister-to-thor",
+                    "backend": "local",
+                    "store_root": str(store_root),
+                    "systems": ["gba"],
+                    "types": ["saves"],
+                }
+            }
+            config_path = root / "config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "fpgmobilegamesync.cli",
+                    "--config",
+                    str(config_path),
+                    "sync",
+                    "--profile",
+                    "local-gba-saves",
+                    "--report-dir",
+                    str(root / "reports" / "profile-dry-run"),
+                ],
+                check=True,
+                cwd=Path.cwd(),
+                text=True,
+                capture_output=True,
+            )
+
+            result = json.loads(completed.stdout)
+            self.assertEqual(result["profile"], "local-gba-saves")
+            self.assertTrue(result["dry_run"])
+            self.assertEqual(result["upload_plan"]["summary"]["upload"], 1)
+            self.assertFalse((store_root / "systems/gba/saves/Advance Wars.sav").exists())
+
+    def test_cli_sync_profile_apply_can_be_forced_to_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mister_root = root / "mister"
+            thor_root = root / "thor"
+            store_root = root / "store"
+            (mister_root / "saves/GBA").mkdir(parents=True)
+            (thor_root / "RetroArch/saves/GBA").mkdir(parents=True)
+            (mister_root / "saves/GBA/Advance Wars.sav").write_bytes(b"save")
+            config = _config(mister_root, thor_root)
+            config["sync_profiles"] = {
+                "apply-by-default": {
+                    "direction": "mister-to-thor",
+                    "backend": "local",
+                    "store_root": str(store_root),
+                    "systems": ["gba"],
+                    "types": ["saves"],
+                    "apply": True,
+                }
+            }
+            config_path = root / "config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "fpgmobilegamesync.cli",
+                    "--config",
+                    str(config_path),
+                    "sync",
+                    "--profile",
+                    "apply-by-default",
+                    "--dry-run",
+                ],
+                check=True,
+                cwd=Path.cwd(),
+                text=True,
+                capture_output=True,
+            )
+
+            result = json.loads(completed.stdout)
+            self.assertTrue(result["dry_run"])
+            self.assertFalse((store_root / "systems/gba/saves/Advance Wars.sav").exists())
+
     def test_apply_mister_to_thor_save_sync_through_s3_store(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

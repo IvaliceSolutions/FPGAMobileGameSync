@@ -42,6 +42,7 @@ def run_doctor(
     _check_devices(config, selected_devices, check_paths, checks)
     _check_systems(config, selected_devices, selected_systems, selected_types, check_paths, checks)
     _check_sync_modes(config, checks)
+    _check_sync_profiles(config, checks)
     if backend == "s3" or check_env:
         _check_s3(config, checks)
     if check_remote:
@@ -317,6 +318,94 @@ def _check_sync_modes(config: dict[str, Any], checks: list[DoctorCheck]) -> None
                     {"mode": name, "target": target},
                 )
             )
+
+
+def _check_sync_profiles(config: dict[str, Any], checks: list[DoctorCheck]) -> None:
+    profiles = config.get("sync_profiles", {})
+    if profiles is None:
+        return
+    if not isinstance(profiles, dict):
+        checks.append(DoctorCheck("error", "invalid_sync_profiles", "sync_profiles must be an object", {}))
+        return
+    sync_modes = config.get("sync_modes", {})
+    systems = set(config.get("systems", {}).keys()) if isinstance(config.get("systems"), dict) else set()
+    default_types = set(config.get("defaults", {}).get("types", []))
+    for name, profile in profiles.items():
+        if not isinstance(profile, dict):
+            checks.append(
+                DoctorCheck(
+                    "error",
+                    "invalid_sync_profile",
+                    f"sync profile must be an object: {name}",
+                    {"profile": name},
+                )
+            )
+            continue
+        direction = profile.get("direction")
+        if direction not in sync_modes:
+            checks.append(
+                DoctorCheck(
+                    "error",
+                    "invalid_sync_profile_direction",
+                    f"sync profile direction is not configured: {name}",
+                    {"profile": name, "direction": direction},
+                )
+            )
+        backend = profile.get("backend")
+        if backend not in {"local", "s3"}:
+            checks.append(
+                DoctorCheck(
+                    "error",
+                    "invalid_sync_profile_backend",
+                    f"sync profile backend is invalid: {name}",
+                    {"profile": name, "backend": backend},
+                )
+            )
+        for key in ("scan_backend", "source_backend", "target_backend"):
+            value = profile.get(key)
+            if value is not None and value not in {"local", "sftp"}:
+                checks.append(
+                    DoctorCheck(
+                        "error",
+                        "invalid_sync_profile_device_backend",
+                        f"sync profile device backend is invalid: {name}",
+                        {"profile": name, "key": key, "backend": value},
+                    )
+                )
+        _check_profile_list(profile, "systems", systems, name, checks)
+        _check_profile_list(profile, "types", default_types, name, checks)
+
+
+def _check_profile_list(
+    profile: dict[str, Any],
+    key: str,
+    allowed_values: set[str],
+    name: str,
+    checks: list[DoctorCheck],
+) -> None:
+    value = profile.get(key)
+    if value is None:
+        return
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        checks.append(
+            DoctorCheck(
+                "error",
+                "invalid_sync_profile_list",
+                f"sync profile {key} must be a list of strings: {name}",
+                {"profile": name, "key": key},
+            )
+        )
+        return
+    unknown = sorted(item for item in value if allowed_values and item not in allowed_values)
+    if unknown:
+        checks.append(
+            DoctorCheck(
+                "error",
+                "invalid_sync_profile_list_value",
+                f"sync profile {key} contains unknown values: {name}",
+                {"profile": name, "key": key, "values": unknown},
+            )
+        )
 
 
 def _check_s3(config: dict[str, Any], checks: list[DoctorCheck]) -> None:

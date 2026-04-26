@@ -84,6 +84,41 @@ sync_modes:
       - compare_s3_with_target
       - download_s3_changes_to_target
 
+sync_profiles:
+  thor-pull:
+    direction: mister-to-thor
+    backend: s3
+    source_backend: sftp
+    target_backend: local
+
+  thor-push:
+    direction: thor-to-mister
+    backend: s3
+    source_backend: local
+    target_backend: sftp
+
+  mister-push:
+    direction: mister-to-thor
+    backend: s3
+    source_backend: local
+    target_backend: sftp
+
+  mister-pull:
+    direction: thor-to-mister
+    backend: s3
+    source_backend: sftp
+    target_backend: local
+
+  third-mister-to-thor:
+    direction: mister-to-thor
+    backend: s3
+    scan_backend: sftp
+
+  third-thor-to-mister:
+    direction: thor-to-mister
+    backend: s3
+    scan_backend: sftp
+
 identity:
   file_id: "{type}/{system}/sha256:{sha256}"
   path_is_identity: false
