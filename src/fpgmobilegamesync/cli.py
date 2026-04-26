@@ -316,6 +316,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fixed UTC timestamp for deterministic trash/backup paths.",
     )
     sync_parser.add_argument(
+        "--report-dir",
+        help="Directory where sync manifests, plans, apply results, and summary are written.",
+    )
+    sync_parser.add_argument(
         "--allow-conflicts",
         action="store_true",
         help="Skip conflict actions instead of refusing the plan during apply.",
@@ -500,6 +504,7 @@ def main(argv: list[str] | None = None) -> int:
                 apply=args.apply,
                 timestamp_utc=args.timestamp_utc,
                 allow_conflicts=args.allow_conflicts,
+                report_dir=Path(args.report_dir) if args.report_dir else None,
             )
             json.dump(
                 result,

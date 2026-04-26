@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,7 @@ def run_local_sync(
     apply: bool = False,
     timestamp_utc: str | None = None,
     allow_conflicts: bool = False,
+    report_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Run source -> local object store -> target sync on local paths."""
 
@@ -89,7 +91,7 @@ def run_local_sync(
             allow_conflicts=allow_conflicts,
         )
 
-    return {
+    result = {
         "backend": "local",
         "direction": direction,
         "dry_run": not apply,
@@ -105,6 +107,23 @@ def run_local_sync(
         "download_plan": download_plan,
         "download_apply": download_apply,
     }
+    if report_dir is not None:
+        result["report_dir"] = str(report_dir)
+        result["report_files"] = _write_run_reports(
+            report_dir=report_dir,
+            artifacts={
+                "source-manifest.json": source_manifest,
+                "store-before-upload-manifest.json": store_manifest_before,
+                "upload-plan.json": upload_plan,
+                "upload-apply.json": upload_apply,
+                "store-after-upload-manifest.json": store_manifest_after_upload,
+                "target-manifest.json": target_manifest,
+                "download-plan.json": download_plan,
+                "download-apply.json": download_apply,
+                "summary.json": _summary_report(result),
+            },
+        )
+    return result
 
 
 def _apply_download_plan_to_device(
@@ -206,3 +225,38 @@ def _combined_apply_summary(applied_groups: list[dict[str, Any]]) -> dict[str, i
         for key, value in group["result"].get("summary", {}).items():
             summary[key] = summary.get(key, 0) + int(value)
     return summary
+
+
+def _write_run_reports(report_dir: Path, artifacts: dict[str, Any]) -> list[str]:
+    report_dir.mkdir(parents=True, exist_ok=True)
+    written = []
+    for filename, data in artifacts.items():
+        if data is None:
+            continue
+        path = report_dir / filename
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        written.append(str(path))
+    return written
+
+
+def _summary_report(result: dict[str, Any]) -> dict[str, Any]:
+    upload_apply = result.get("upload_apply") or {}
+    download_apply = result.get("download_apply") or {}
+    return {
+        "backend": result["backend"],
+        "direction": result["direction"],
+        "dry_run": result["dry_run"],
+        "source_device": result["source_device"],
+        "target_device": result["target_device"],
+        "store_root": result["store_root"],
+        "source_summary": result["source_summary"],
+        "store_summary_before_upload": result["store_summary_before_upload"],
+        "upload_plan_summary": result["upload_plan"]["summary"],
+        "upload_apply_summary": upload_apply.get("summary"),
+        "store_summary_after_upload": result["store_summary_after_upload"],
+        "target_summary": result["target_summary"],
+        "download_plan_summary": result["download_plan"]["summary"],
+        "download_apply_summary": download_apply.get("summary"),
+    }

@@ -17,6 +17,7 @@ class SyncEngineTests(unittest.TestCase):
             mister_root = root / "mister"
             thor_root = root / "thor"
             store_root = root / "store"
+            report_dir = root / "reports" / "run-1"
             (mister_root / "saves/GBA").mkdir(parents=True)
             (thor_root / "RetroArch/saves/GBA").mkdir(parents=True)
             (mister_root / "saves/GBA/Golden Sun.sav").write_bytes(b"save-data")
@@ -29,6 +30,7 @@ class SyncEngineTests(unittest.TestCase):
                 types=["saves"],
                 apply=True,
                 timestamp_utc="2026-04-26T20-30-00Z",
+                report_dir=report_dir,
             )
 
             self.assertFalse(result["dry_run"])
@@ -42,6 +44,16 @@ class SyncEngineTests(unittest.TestCase):
                 (thor_root / "RetroArch/saves/GBA/Golden Sun.srm").read_bytes(),
                 b"save-data",
             )
+            self.assertTrue((report_dir / "source-manifest.json").exists())
+            self.assertTrue((report_dir / "upload-plan.json").exists())
+            self.assertTrue((report_dir / "upload-apply.json").exists())
+            self.assertTrue((report_dir / "download-plan.json").exists())
+            self.assertTrue((report_dir / "download-apply.json").exists())
+            summary = json.loads((report_dir / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["direction"], "mister-to-thor")
+            self.assertEqual(summary["upload_plan_summary"]["upload"], 1)
+            self.assertEqual(summary["download_plan_summary"]["download"], 1)
+            self.assertIn(str(report_dir / "summary.json"), result["report_files"])
 
     def test_cli_sync_dry_run_reports_both_plans(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -72,6 +84,8 @@ class SyncEngineTests(unittest.TestCase):
                     "local",
                     "--store-root",
                     str(store_root),
+                    "--report-dir",
+                    str(root / "reports" / "dry-run"),
                     "--system",
                     "gba",
                     "--type",
@@ -88,6 +102,8 @@ class SyncEngineTests(unittest.TestCase):
             self.assertEqual(result["upload_plan"]["summary"]["upload"], 1)
             self.assertEqual(result["download_plan"]["summary"]["total"], 0)
             self.assertFalse((store_root / "systems/gba/saves/Advance Wars.sav").exists())
+            self.assertTrue((root / "reports/dry-run/upload-plan.json").exists())
+            self.assertFalse((root / "reports/dry-run/upload-apply.json").exists())
 
 
 def _config(mister_root: Path, thor_root: Path) -> dict:

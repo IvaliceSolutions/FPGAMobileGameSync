@@ -151,6 +151,7 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
   --direction mister-to-thor \
   --backend local \
   --store-root /tmp/fpgms-store \
+  --report-dir /tmp/fpgms-runs/mister-to-thor-dry-run \
   --system gba \
   --type saves \
   --pretty
@@ -163,6 +164,7 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
   --direction mister-to-thor \
   --backend local \
   --store-root /tmp/fpgms-store \
+  --report-dir /tmp/fpgms-runs/mister-to-thor-apply \
   --system gba \
   --type saves \
   --apply \
@@ -177,6 +179,7 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
   --direction thor-to-mister \
   --backend local \
   --store-root /tmp/fpgms-store \
+  --report-dir /tmp/fpgms-runs/thor-to-mister \
   --source-root /Volumes/thor-storage \
   --target-root /Volumes/mister-fat \
   --system gba \
@@ -188,6 +191,18 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
 With the local backend, `--source-root` and `--target-root` may be real local
 paths, mounted network shares, or device filesystems exposed by another tool.
 The later SFTP/S3 backend will use the same source -> store -> target workflow.
+
+When `--report-dir` is provided, the command writes:
+
+- `source-manifest.json`
+- `store-before-upload-manifest.json`
+- `upload-plan.json`
+- `upload-apply.json` when `--apply` is used
+- `store-after-upload-manifest.json`
+- `target-manifest.json`
+- `download-plan.json`
+- `download-apply.json` when `--apply` is used
+- `summary.json`
 
 ## Local Object Store
 
