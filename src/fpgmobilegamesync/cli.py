@@ -9,7 +9,12 @@ from pathlib import Path
 
 from .compare import CompareError, compare_manifests, load_manifest
 from .config import ConfigError, load_config
-from .executor import ApplyError, apply_plan_to_local_store, load_plan
+from .executor import (
+    ApplyError,
+    apply_plan_to_local_store,
+    apply_plan_to_local_target,
+    load_plan,
+)
 from .object_store import LocalObjectStore, ObjectStoreError
 from .planner import PlanError, build_plan
 from .scanner import ScanError, scan
@@ -156,8 +161,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     apply_parser.add_argument(
         "--store-root",
-        required=True,
+        required=False,
         help="Local object-store root directory.",
+    )
+    apply_parser.add_argument(
+        "--target-root",
+        help="Local target root directory for download plans.",
+    )
+    apply_parser.add_argument(
+        "--trash-root",
+        help="Local trash root directory for download plans.",
     )
     apply_parser.add_argument(
         "--timestamp-utc",
@@ -240,12 +253,26 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.write("\n")
             return 0
         if args.command == "apply":
-            result = apply_plan_to_local_store(
-                plan=load_plan(Path(args.plan)),
-                store_root=Path(args.store_root),
-                timestamp_utc=args.timestamp_utc,
-                allow_conflicts=args.allow_conflicts,
-            )
+            plan = load_plan(Path(args.plan))
+            if plan.get("mode") == "download" or args.target_root:
+                if not args.target_root:
+                    raise ApplyError("--target-root is required for local target apply")
+                result = apply_plan_to_local_target(
+                    plan=plan,
+                    target_root=Path(args.target_root),
+                    trash_root=Path(args.trash_root) if args.trash_root else None,
+                    timestamp_utc=args.timestamp_utc,
+                    allow_conflicts=args.allow_conflicts,
+                )
+            else:
+                if not args.store_root:
+                    raise ApplyError("--store-root is required for local object-store apply")
+                result = apply_plan_to_local_store(
+                    plan=plan,
+                    store_root=Path(args.store_root),
+                    timestamp_utc=args.timestamp_utc,
+                    allow_conflicts=args.allow_conflicts,
+                )
             json.dump(
                 result,
                 sys.stdout,

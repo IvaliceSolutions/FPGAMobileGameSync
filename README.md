@@ -165,10 +165,41 @@ The local backend currently supports remote-side operations:
 - `trash_remote`
 - `conflict`, which is refused unless `--allow-conflicts` is passed
 
+For download plans, apply to a local target root:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli apply \
+  --plan download-plan.json \
+  --backend local \
+  --target-root /tmp/fpgms-target \
+  --trash-root /tmp/fpgms-target/.sync_trash \
+  --pretty
+```
+
+Local target apply supports:
+
+- `noop`
+- `download`
+- `rename_local`
+- `trash_local`
+- `conflict`, which is refused unless `--allow-conflicts` is passed
+
 When an upload overwrites an existing object, the old object is copied under:
 
 ```text
 backups/<timestamp-utc>/<origin-device>/systems/...
+```
+
+When a download overwrites an existing file, the old local file is copied under:
+
+```text
+<trash-root>/backups/<timestamp-utc>/<origin-device>/...
+```
+
+Local deletes are moved under:
+
+```text
+<trash-root>/deleted/<timestamp-utc>/<origin-device>/...
 ```
 
 Trash and backup paths can be made deterministic for tests:
