@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fpgmobilegamesync.config import load_config
 from fpgmobilegamesync.converter import ConversionError, convert_save_file
-from fpgmobilegamesync.cli import _resolve_save_output_path
+from fpgmobilegamesync.cli import _resolve_save_output_path, _save_output_stem
 
 
 class ConverterTests(unittest.TestCase):
@@ -54,14 +54,17 @@ class ConverterTests(unittest.TestCase):
             self.assertEqual(output.name, "Chrono Trigger.srm")
             self.assertEqual(result["size"], 8192)
 
-    def test_psx_save_can_use_game_folder_name_for_output(self) -> None:
+    def test_psx_save_uses_retroarch_game_file_stem_for_thor_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "Final Fantasy 9 (FR).sav"
             output_dir = root / "out"
-            game_folder = root / "games" / "Final Fantasy IX"
+            mister_game_folder = root / "mister" / "Final Fantasy 9 (FR)"
+            retroarch_game_file = root / "retroarch" / "Final Fantasy IX.chd"
             output_dir.mkdir()
-            game_folder.mkdir(parents=True)
+            mister_game_folder.mkdir(parents=True)
+            retroarch_game_file.parent.mkdir(parents=True)
+            retroarch_game_file.write_bytes(b"fake chd")
             source.write_bytes(b"x" * 131072)
 
             output = _resolve_save_output_path(
@@ -70,12 +73,37 @@ class ConverterTests(unittest.TestCase):
                 "mister-to-thor",
                 source,
                 output_dir,
-                output_stem=game_folder.name,
+                output_stem=_save_output_stem(
+                    output_stem=None,
+                    game_folder=None,
+                    mister_game_folder=str(mister_game_folder),
+                    retroarch_game_file=str(retroarch_game_file),
+                    direction="mister-to-thor",
+                ),
             )
-            result = convert_save_file(self.config, "psx", "mister-to-thor", source, output)
+            result = convert_save_file(
+                self.config,
+                "psx",
+                "mister-to-thor",
+                source,
+                output,
+                metadata={
+                    "mister_game_folder": str(mister_game_folder),
+                    "retroarch_game_file": str(retroarch_game_file),
+                    "retroarch_game_file_stem": retroarch_game_file.stem,
+                },
+            )
 
             self.assertEqual(output.name, "Final Fantasy IX.srm")
             self.assertEqual(result["size"], 131072)
+            self.assertEqual(
+                result["metadata"]["mister_game_folder"],
+                str(mister_game_folder),
+            )
+            self.assertEqual(
+                result["metadata"]["retroarch_game_file_stem"],
+                "Final Fantasy IX",
+            )
 
     def test_psx_rejects_non_raw_memory_card_size(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

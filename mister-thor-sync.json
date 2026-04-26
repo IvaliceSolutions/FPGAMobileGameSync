@@ -415,6 +415,11 @@
       "save_conversion": {
         "strategy": "psx_raw_memory_card",
         "expected_raw_card_size": 131072,
+        "naming": {
+          "mister_key": "mister_game_folder",
+          "thor_key": "retroarch_game_file_stem",
+          "thor_save_name_source": "retroarch_game_file_stem"
+        },
         "mister_to_thor": {
           "accepted_input_extensions": [
             ".sav",

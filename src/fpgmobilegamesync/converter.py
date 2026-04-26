@@ -17,6 +17,7 @@ def convert_save_file(
     direction: str,
     source_path: Path,
     output_path: Path,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if direction not in {"mister-to-thor", "thor-to-mister"}:
         raise ConversionError(f"unsupported conversion direction: {direction}")
@@ -38,6 +39,7 @@ def convert_save_file(
             source_path=source_path,
             output_path=output_path,
             direction=direction,
+            metadata=metadata,
         )
     if strategy == "raw_same_content":
         rules = conversion.get(direction_key, {})
@@ -47,6 +49,7 @@ def convert_save_file(
             source_path=source_path,
             output_path=output_path,
             direction=direction,
+            metadata=metadata,
         )
     if strategy == "psx_raw_memory_card":
         rules = conversion.get(direction_key, {})
@@ -56,6 +59,7 @@ def convert_save_file(
             source_path=source_path,
             output_path=output_path,
             direction=direction,
+            metadata=metadata,
         )
 
     raise ConversionError(f"unsupported save conversion strategy: {strategy}")
@@ -80,16 +84,20 @@ def _copy_save(
     source_path: Path,
     output_path: Path,
     direction: str,
+    metadata: dict[str, Any] | None,
 ) -> dict[str, Any]:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_path, output_path)
-    return {
+    result = {
         "strategy": strategy,
         "direction": direction,
         "source": str(source_path),
         "output": str(output_path),
         "size": output_path.stat().st_size,
     }
+    if metadata:
+        result["metadata"] = metadata
+    return result
 
 
 def _validate_raw_same_content(source_path: Path, rules: dict[str, Any]) -> None:

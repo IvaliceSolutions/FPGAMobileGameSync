@@ -220,7 +220,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     convert_parser.add_argument(
         "--game-folder",
-        help="PSX game folder; its folder name is used as output stem when --output is a directory.",
+        help="Deprecated alias for --mister-game-folder.",
+    )
+    convert_parser.add_argument(
+        "--mister-game-folder",
+        help="MiSTer PSX game folder name/path to keep in conversion metadata.",
+    )
+    convert_parser.add_argument(
+        "--retroarch-game-file",
+        help="RetroArch PSX game file path; its filename stem is used for Thor save naming.",
     )
     convert_parser.add_argument(
         "--pretty",
@@ -331,7 +339,13 @@ def main(argv: list[str] | None = None) -> int:
                 direction=args.direction,
                 source_path=source_path,
                 output=Path(args.output),
-                output_stem=_save_output_stem(args.output_stem, args.game_folder),
+                output_stem=_save_output_stem(
+                    output_stem=args.output_stem,
+                    game_folder=args.game_folder,
+                    mister_game_folder=args.mister_game_folder,
+                    retroarch_game_file=args.retroarch_game_file,
+                    direction=args.direction,
+                ),
             )
             result = convert_save_file(
                 config=config,
@@ -339,6 +353,10 @@ def main(argv: list[str] | None = None) -> int:
                 direction=args.direction,
                 source_path=source_path,
                 output_path=output_path,
+                metadata=_save_metadata(
+                    mister_game_folder=args.mister_game_folder or args.game_folder,
+                    retroarch_game_file=args.retroarch_game_file,
+                ),
             )
             json.dump(
                 result,
@@ -378,12 +396,34 @@ def _resolve_save_output_path(
     return output
 
 
-def _save_output_stem(output_stem: str | None, game_folder: str | None) -> str | None:
+def _save_output_stem(
+    output_stem: str | None,
+    game_folder: str | None,
+    mister_game_folder: str | None,
+    retroarch_game_file: str | None,
+    direction: str,
+) -> str | None:
     if output_stem:
         return output_stem
-    if game_folder:
-        return Path(game_folder).name
+    if retroarch_game_file and direction == "mister-to-thor":
+        return Path(retroarch_game_file).stem
+    folder = mister_game_folder or game_folder
+    if folder:
+        return Path(folder).name
     return None
+
+
+def _save_metadata(
+    mister_game_folder: str | None,
+    retroarch_game_file: str | None,
+) -> dict | None:
+    metadata = {}
+    if mister_game_folder:
+        metadata["mister_game_folder"] = str(mister_game_folder)
+    if retroarch_game_file:
+        metadata["retroarch_game_file"] = str(retroarch_game_file)
+        metadata["retroarch_game_file_stem"] = Path(retroarch_game_file).stem
+    return metadata or None
 
 
 if __name__ == "__main__":

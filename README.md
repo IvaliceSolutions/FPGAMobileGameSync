@@ -241,8 +241,14 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli convert-save \
   --output /tmp/out
 ```
 
-For PSX, the RetroArch save may need to use the exact game folder name. Use
-`--game-folder` for that:
+For PSX, keep both names in metadata:
+
+- `mister_game_folder`: the MiSTer folder containing the game files.
+- `retroarch_game_file`: the RetroArch game file, usually `.chd`, `.cue`, or
+  `.m3u`.
+
+When converting to Thor/SwanStation, the save name uses the RetroArch game file
+stem, not the MiSTer folder name:
 
 ```sh
 PYTHONPATH=src python3 -m fpgmobilegamesync.cli convert-save \
@@ -250,7 +256,8 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli convert-save \
   --direction mister-to-thor \
   --source "/path/to/Final Fantasy 9 (FR).sav" \
   --output /tmp/out \
-  --game-folder "/storage/emulated/0/RetroArch/games/PSX/Final Fantasy IX"
+  --mister-game-folder "/media/fat/games/PSX/Final Fantasy 9 (FR)" \
+  --retroarch-game-file "/storage/emulated/0/RetroArch/games/PSX/Final Fantasy IX.chd"
 ```
 
 This writes:
