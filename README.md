@@ -45,6 +45,39 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli --config mister-thor-sync.json s
 The command prints a JSON manifest with paths, sizes, modification times, and
 SHA-256 hashes.
 
+Each scanned item contains:
+
+- `relative_path`: path relative to the device root.
+- `content_path`: path relative to the configured content folder.
+- `sync_key`: canonical object key under the S3 `systems/` prefix.
+
+`content_path` is what lets MiSTer and Thor be compared even though their local
+roots differ.
+
+## Comparing Manifests
+
+Compare two scan manifests:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli compare \
+  --source source-manifest.json \
+  --target target-manifest.json \
+  --source-name mister \
+  --target-name s3 \
+  --pretty
+```
+
+The comparator detects:
+
+- `unchanged`
+- `modified`
+- `renamed`
+- `moved`
+- `renamed_moved`
+- `added`
+- `deleted`
+- `ambiguous_rename`
+
 ## Runtime Notes
 
 YAML loading requires `PyYAML`. When it is not available, use the generated

@@ -21,6 +21,8 @@ class ScanItem:
     type: str
     absolute_path: str
     relative_path: str
+    content_path: str
+    sync_key: str
     size: int
     modified_ns: int
     sha256: str
@@ -101,12 +103,30 @@ def _scan_system_type(
             continue
         if absolute.is_file():
             if _matches_extensions(absolute, extensions):
-                items.append(_scan_file(device, system, content_type, root, absolute))
+                items.append(
+                    _scan_file(
+                        device=device,
+                        system=system,
+                        content_type=content_type,
+                        device_root=root,
+                        content_root=absolute.parent,
+                        path=absolute,
+                    )
+                )
             continue
         if absolute.is_dir():
             for file_path in _walk_files(config, absolute):
                 if _matches_extensions(file_path, extensions):
-                    items.append(_scan_file(device, system, content_type, root, file_path))
+                    items.append(
+                        _scan_file(
+                            device=device,
+                            system=system,
+                            content_type=content_type,
+                            device_root=root,
+                            content_root=absolute,
+                            path=file_path,
+                        )
+                    )
             continue
         skipped.append(
             {
@@ -125,16 +145,20 @@ def _scan_file(
     device: str,
     system: str,
     content_type: str,
-    root: Path,
+    device_root: Path,
+    content_root: Path,
     path: Path,
 ) -> ScanItem:
     stat = path.stat()
+    content_path = str(path.relative_to(content_root))
     return ScanItem(
         device=device,
         system=system,
         type=content_type,
         absolute_path=str(path),
-        relative_path=str(path.relative_to(root)),
+        relative_path=str(path.relative_to(device_root)),
+        content_path=content_path,
+        sync_key=f"systems/{system}/{content_type}/{content_path}",
         size=stat.st_size,
         modified_ns=stat.st_mtime_ns,
         sha256=_sha256(path),

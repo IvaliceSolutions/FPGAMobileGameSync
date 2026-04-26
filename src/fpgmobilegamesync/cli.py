@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 
+from .compare import CompareError, compare_manifests, load_manifest
 from .config import ConfigError, load_config
 from .scanner import ScanError, scan
 
@@ -49,6 +50,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pretty-print JSON output.",
     )
 
+    compare_parser = subparsers.add_parser(
+        "compare",
+        help="Compare two scan manifests and detect changes.",
+    )
+    compare_parser.add_argument(
+        "--source",
+        required=True,
+        help="Path to the source manifest JSON.",
+    )
+    compare_parser.add_argument(
+        "--target",
+        required=True,
+        help="Path to the target manifest JSON.",
+    )
+    compare_parser.add_argument(
+        "--source-name",
+        default="source",
+        help="Label for the source side.",
+    )
+    compare_parser.add_argument(
+        "--target-name",
+        default="target",
+        help="Label for the target side.",
+    )
+    compare_parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output.",
+    )
+
     return parser
 
 
@@ -57,8 +88,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        config = load_config(Path(args.config))
         if args.command == "scan":
+            config = load_config(Path(args.config))
             manifest = scan(
                 config=config,
                 device=args.device,
@@ -73,7 +104,22 @@ def main(argv: list[str] | None = None) -> int:
             )
             sys.stdout.write("\n")
             return 0
-    except (ConfigError, ScanError) as exc:
+        if args.command == "compare":
+            plan = compare_manifests(
+                source=load_manifest(Path(args.source)),
+                target=load_manifest(Path(args.target)),
+                source_name=args.source_name,
+                target_name=args.target_name,
+            )
+            json.dump(
+                plan,
+                sys.stdout,
+                indent=2 if args.pretty else None,
+                sort_keys=True,
+            )
+            sys.stdout.write("\n")
+            return 0
+    except (CompareError, ConfigError, ScanError) as exc:
         parser.exit(2, f"error: {exc}\n")
 
     parser.exit(2, "error: unknown command\n")
@@ -82,4 +128,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
