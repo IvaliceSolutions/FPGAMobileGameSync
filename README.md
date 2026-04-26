@@ -41,6 +41,24 @@ From this repository:
 PYTHONPATH=src python3 -m fpgmobilegamesync.cli --config mister-thor-sync.json scan --device mister
 ```
 
+Before a real run, check the configuration without changing files:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli --config mister-thor-sync.json doctor \
+  --backend s3 \
+  --pretty
+```
+
+Add `--check-paths` when the MiSTer/Thor storage is mounted or when running on
+one of the devices:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli --config mister-thor-sync.json doctor \
+  --backend s3 \
+  --check-paths \
+  --pretty
+```
+
 To scan one system/type:
 
 ```sh

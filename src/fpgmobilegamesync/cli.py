@@ -17,6 +17,7 @@ from .converter import (
     inspect_save_file,
     retroarch_game_file_stem,
 )
+from .doctor import DoctorError, run_doctor
 from .executor import (
     ApplyError,
     apply_plan_from_s3_to_local_target,
@@ -333,6 +334,50 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pretty-print JSON output.",
     )
 
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Run configuration pre-flight checks.",
+    )
+    doctor_parser.add_argument(
+        "--backend",
+        choices=("local", "s3"),
+        default="local",
+        help="Backend to validate. S3 also checks required environment variables.",
+    )
+    doctor_parser.add_argument(
+        "--device",
+        action="append",
+        choices=("mister", "thor"),
+        help="Device profile to check. Can be repeated. Defaults to all devices.",
+    )
+    doctor_parser.add_argument(
+        "--system",
+        action="append",
+        choices=("gba", "snes", "psx"),
+        help="System to check. Can be repeated. Defaults to configured defaults.",
+    )
+    doctor_parser.add_argument(
+        "--type",
+        action="append",
+        choices=("games", "saves", "bios", "thumbnails"),
+        help="Content type to check. Can be repeated. Defaults to configured defaults.",
+    )
+    doctor_parser.add_argument(
+        "--check-paths",
+        action="store_true",
+        help="Check whether configured local paths currently exist.",
+    )
+    doctor_parser.add_argument(
+        "--check-env",
+        action="store_true",
+        help="Check S3 environment variables even when using the local backend.",
+    )
+    doctor_parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output.",
+    )
+
     sync_parser = subparsers.add_parser(
         "sync",
         help="Run a full source -> store -> target sync workflow.",
@@ -603,6 +648,25 @@ def main(argv: list[str] | None = None) -> int:
             )
             sys.stdout.write("\n")
             return 0
+        if args.command == "doctor":
+            config = load_config(Path(args.config))
+            result = run_doctor(
+                config=config,
+                devices=args.device,
+                systems=args.system,
+                types=args.type,
+                backend=args.backend,
+                check_paths=args.check_paths,
+                check_env=args.check_env,
+            )
+            json.dump(
+                result,
+                sys.stdout,
+                indent=2 if args.pretty else None,
+                sort_keys=True,
+            )
+            sys.stdout.write("\n")
+            return 1 if result["status"] == "error" else 0
         if args.command == "sync":
             config = load_config(Path(args.config))
             if args.backend == "local":
@@ -649,6 +713,7 @@ def main(argv: list[str] | None = None) -> int:
         CompareError,
         ConfigError,
         ConversionError,
+        DoctorError,
         ObjectStoreError,
         PlanError,
         ScanError,
