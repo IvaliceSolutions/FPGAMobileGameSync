@@ -151,6 +151,9 @@ def run_s3_sync(
     store: S3ObjectStore | None = None,
     scan_backend: str = "local",
     sftp_clients: dict[str, Any] | None = None,
+    use_lock: bool = True,
+    lock_ttl_seconds: int = 1800,
+    lock_owner: str | None = None,
 ) -> dict[str, Any]:
     """Run source -> S3/Garage -> target sync on local or SFTP device roots."""
     if scan_backend not in {"local", "sftp"}:
@@ -165,6 +168,9 @@ def run_s3_sync(
 
     managed_clients: list[Any] = []
     clients = sftp_clients or {}
+    s3_store = store or S3ObjectStore.from_config(runtime_config)
+    lock = None
+    lock_release = None
     try:
         if scan_backend == "sftp":
             clients = dict(clients)
@@ -174,84 +180,94 @@ def run_s3_sync(
                     clients[device] = client
                     managed_clients.append(client)
 
-        source_manifest = _scan_device(
-            config=runtime_config,
-            device=source_device,
-            systems=systems,
-            types=types,
-            scan_backend=scan_backend,
-            sftp_client=clients.get(source_device),
-        )
-        s3_store = store or S3ObjectStore.from_config(runtime_config)
-        store_manifest_before = s3_store.scan()
-        upload_plan = build_plan(
-            source=source_manifest,
-            target=store_manifest_before,
-            mode="upload",
-            source_name=source_device,
-            target_name="s3",
-        )
+        if apply and use_lock:
+            lock = s3_store.acquire_lock(
+                name="sync",
+                owner=lock_owner or f"{source_device}-to-{target_device}",
+                ttl_seconds=lock_ttl_seconds,
+            )
 
-        upload_apply = None
-        if apply:
-            if scan_backend == "sftp":
-                upload_apply = apply_plan_from_sftp_to_s3_store(
-                    plan=upload_plan,
-                    config=runtime_config,
-                    client=clients[source_device],
-                    timestamp_utc=timestamp_utc,
-                    allow_conflicts=allow_conflicts,
-                    source_device=source_device,
-                    store=s3_store,
-                )
-            else:
-                upload_apply = apply_plan_to_s3_store(
-                    plan=upload_plan,
-                    config=runtime_config,
-                    timestamp_utc=timestamp_utc,
-                    allow_conflicts=allow_conflicts,
-                    source_device=source_device,
-                    store=s3_store,
-                )
+        try:
+            source_manifest = _scan_device(
+                config=runtime_config,
+                device=source_device,
+                systems=systems,
+                types=types,
+                scan_backend=scan_backend,
+                sftp_client=clients.get(source_device),
+            )
+            store_manifest_before = s3_store.scan()
+            upload_plan = build_plan(
+                source=source_manifest,
+                target=store_manifest_before,
+                mode="upload",
+                source_name=source_device,
+                target_name="s3",
+            )
 
-        store_manifest_after_upload = s3_store.scan()
-        target_manifest = _scan_device(
-            config=runtime_config,
-            device=target_device,
-            systems=systems,
-            types=types,
-            scan_backend=scan_backend,
-            sftp_client=clients.get(target_device),
-        )
-        download_plan = build_plan(
-            source=store_manifest_after_upload,
-            target=target_manifest,
-            mode="download",
-            source_name="s3",
-            target_name=target_device,
-        )
+            upload_apply = None
+            if apply:
+                if scan_backend == "sftp":
+                    upload_apply = apply_plan_from_sftp_to_s3_store(
+                        plan=upload_plan,
+                        config=runtime_config,
+                        client=clients[source_device],
+                        timestamp_utc=timestamp_utc,
+                        allow_conflicts=allow_conflicts,
+                        source_device=source_device,
+                        store=s3_store,
+                    )
+                else:
+                    upload_apply = apply_plan_to_s3_store(
+                        plan=upload_plan,
+                        config=runtime_config,
+                        timestamp_utc=timestamp_utc,
+                        allow_conflicts=allow_conflicts,
+                        source_device=source_device,
+                        store=s3_store,
+                    )
 
-        download_apply = None
-        if apply:
-            if scan_backend == "sftp":
-                download_apply = _apply_s3_download_plan_to_sftp_device(
-                    config=runtime_config,
-                    plan=download_plan,
-                    target_device=target_device,
-                    timestamp_utc=timestamp_utc,
-                    allow_conflicts=allow_conflicts,
-                    store=s3_store,
-                    client=clients[target_device],
-                )
-            else:
-                download_apply = _apply_s3_download_plan_to_device(
-                    config=runtime_config,
-                    plan=download_plan,
-                    target_device=target_device,
-                    timestamp_utc=timestamp_utc,
-                    allow_conflicts=allow_conflicts,
-                    store=s3_store,
-                )
+            store_manifest_after_upload = s3_store.scan()
+            target_manifest = _scan_device(
+                config=runtime_config,
+                device=target_device,
+                systems=systems,
+                types=types,
+                scan_backend=scan_backend,
+                sftp_client=clients.get(target_device),
+            )
+            download_plan = build_plan(
+                source=store_manifest_after_upload,
+                target=target_manifest,
+                mode="download",
+                source_name="s3",
+                target_name=target_device,
+            )
+
+            download_apply = None
+            if apply:
+                if scan_backend == "sftp":
+                    download_apply = _apply_s3_download_plan_to_sftp_device(
+                        config=runtime_config,
+                        plan=download_plan,
+                        target_device=target_device,
+                        timestamp_utc=timestamp_utc,
+                        allow_conflicts=allow_conflicts,
+                        store=s3_store,
+                        client=clients[target_device],
+                    )
+                else:
+                    download_apply = _apply_s3_download_plan_to_device(
+                        config=runtime_config,
+                        plan=download_plan,
+                        target_device=target_device,
+                        timestamp_utc=timestamp_utc,
+                        allow_conflicts=allow_conflicts,
+                        store=s3_store,
+                    )
+        finally:
+            if lock is not None:
+                lock_release = s3_store.release_lock(lock)
     finally:
         for client in managed_clients:
             client.close()
@@ -277,6 +293,9 @@ def run_s3_sync(
         "download_plan": download_plan,
         "download_apply": download_apply,
     }
+    if lock is not None:
+        result["lock"] = _lock_report(lock)
+        result["lock_release"] = lock_release
     if report_dir is not None:
         result["report_dir"] = str(report_dir)
         result["report_files"] = _write_run_reports(
@@ -290,6 +309,8 @@ def run_s3_sync(
                 "target-manifest.json": target_manifest,
                 "download-plan.json": download_plan,
                 "download-apply.json": download_apply,
+                "lock.json": _lock_report(lock) if lock is not None else None,
+                "lock-release.json": lock_release,
                 "summary.json": _summary_report(result),
             },
         )
@@ -562,6 +583,10 @@ def _combined_apply_summary(applied_groups: list[dict[str, Any]]) -> dict[str, i
     return summary
 
 
+def _lock_report(lock: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in lock.items() if key != "token"}
+
+
 def _write_run_reports(report_dir: Path, artifacts: dict[str, Any]) -> list[str]:
     report_dir.mkdir(parents=True, exist_ok=True)
     written = []
@@ -600,4 +625,8 @@ def _summary_report(result: dict[str, Any]) -> dict[str, Any]:
         summary["store_root"] = result["store_root"]
     if "store" in result:
         summary["store"] = result["store"]
+    if "lock" in result:
+        summary["lock"] = result["lock"]
+    if "lock_release" in result:
+        summary["lock_release"] = result["lock_release"]
     return summary

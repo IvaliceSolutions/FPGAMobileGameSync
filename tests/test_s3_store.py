@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -126,6 +127,68 @@ class S3ObjectStoreTests(unittest.TestCase):
         self.assertEqual(connection.bucket, "bucket")
         self.assertEqual(connection.endpoint_url, "https://garage.example")
         self.assertEqual(connection.prefix, "fp")
+
+    def test_acquire_and_release_lock(self) -> None:
+        client = FakeS3Client({})
+        store = S3ObjectStore(client=client, bucket="bucket", prefix="fp")
+        now = datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc)
+
+        lock = store.acquire_lock(
+            name="sync",
+            owner="thor",
+            ttl_seconds=60,
+            now_utc=now,
+        )
+
+        self.assertEqual(lock["owner"], "thor")
+        self.assertEqual(lock["acquired_at_utc"], "2026-04-26T12:00:00Z")
+        self.assertEqual(lock["expires_at_utc"], "2026-04-26T12:01:00Z")
+        self.assertIn("token", lock)
+        self.assertIn("fp/locks/sync.json", client.objects)
+
+        result = store.release_lock(lock)
+
+        self.assertEqual(result["status"], "released")
+        self.assertNotIn("fp/locks/sync.json", client.objects)
+
+    def test_acquire_lock_refuses_active_lock(self) -> None:
+        client = FakeS3Client({})
+        store = S3ObjectStore(client=client, bucket="bucket")
+        now = datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc)
+        store.acquire_lock(name="sync", owner="mister", ttl_seconds=60, now_utc=now)
+
+        with self.assertRaises(ObjectStoreError):
+            store.acquire_lock(
+                name="sync",
+                owner="thor",
+                ttl_seconds=60,
+                now_utc=now + timedelta(seconds=10),
+            )
+
+    def test_acquire_lock_replaces_expired_lock(self) -> None:
+        client = FakeS3Client({})
+        store = S3ObjectStore(client=client, bucket="bucket")
+        now = datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc)
+        first = store.acquire_lock(name="sync", owner="mister", ttl_seconds=1, now_utc=now)
+
+        second = store.acquire_lock(
+            name="sync",
+            owner="thor",
+            ttl_seconds=60,
+            now_utc=now + timedelta(seconds=2),
+        )
+
+        self.assertNotEqual(first["token"], second["token"])
+        self.assertEqual(second["owner"], "thor")
+
+    def test_release_lock_refuses_token_mismatch(self) -> None:
+        client = FakeS3Client({})
+        store = S3ObjectStore(client=client, bucket="bucket")
+        lock = store.acquire_lock(name="sync", owner="mister")
+        wrong_lock = {**lock, "token": "wrong"}
+
+        with self.assertRaises(ObjectStoreError):
+            store.release_lock(wrong_lock)
 
     def test_apply_upload_plan_to_s3_store(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -335,7 +398,9 @@ class FakeS3Client:
         self._require(Key)
         return {"Body": io.BytesIO(self.objects[Key])}
 
-    def put_object(self, Bucket: str, Key: str, Body: bytes, **_kwargs: object) -> None:
+    def put_object(self, Bucket: str, Key: str, Body: bytes, **kwargs: object) -> None:
+        if kwargs.get("IfNoneMatch") == "*" and Key in self.objects:
+            raise FakePreconditionFailed(Key)
         self.objects[Key] = Body
 
     def head_object(self, Bucket: str, Key: str) -> dict:
@@ -371,6 +436,12 @@ class FakeNotFound(Exception):
     def __init__(self, key: str) -> None:
         super().__init__(key)
         self.response = {"Error": {"Code": "NoSuchKey"}}
+
+
+class FakePreconditionFailed(Exception):
+    def __init__(self, key: str) -> None:
+        super().__init__(key)
+        self.response = {"Error": {"Code": "PreconditionFailed"}}
 
 
 def _item(path: Path, content_path: str, kind: str = "games", system: str = "gba") -> dict:

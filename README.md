@@ -213,7 +213,11 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
 ```
 
 Use Garage/S3 directly by switching the backend. The S3 configuration is read
-from the main config file, so `--store-root` is only needed for `--backend local`:
+from the main config file, so `--store-root` is only needed for `--backend local`.
+When `--apply` is used, the S3 workflow takes a short-lived `locks/sync.json`
+lock before scanning and writing. This prevents two controllers from applying
+changes to the same Garage bucket at the same time; the lock is released at the
+end of the run and its token is omitted from reports:
 
 ```sh
 PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
@@ -225,6 +229,10 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
   --apply \
   --pretty
 ```
+
+The default lock TTL is 30 minutes. Use `--lock-ttl-seconds` to change it, and
+reserve `--no-lock` for recovery/debugging when you have already verified that
+no other sync is running.
 
 From a third controller device, use the configured SFTP blocks for MiSTer and
 Thor by adding `--scan-backend sftp`. This scans both devices remotely, uploads

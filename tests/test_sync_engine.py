@@ -134,6 +134,8 @@ class SyncEngineTests(unittest.TestCase):
 
             self.assertFalse(result["dry_run"])
             self.assertEqual(result["backend"], "s3")
+            self.assertEqual(result["lock"]["owner"], "mister-to-thor")
+            self.assertEqual(result["lock_release"]["status"], "released")
             self.assertEqual(result["upload_plan"]["summary"]["upload"], 1)
             self.assertEqual(result["download_plan"]["summary"]["download"], 1)
             self.assertEqual(
@@ -141,6 +143,7 @@ class SyncEngineTests(unittest.TestCase):
                 b"save-data",
             )
             self.assertIn("fp/manifests/s3.json", client.objects)
+            self.assertNotIn("fp/locks/sync.json", client.objects)
             self.assertEqual(
                 (thor_root / "RetroArch/saves/GBA/Golden Sun.srm").read_bytes(),
                 b"save-data",
@@ -148,6 +151,7 @@ class SyncEngineTests(unittest.TestCase):
             summary = json.loads((report_dir / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["backend"], "s3")
             self.assertEqual(summary["store"]["prefix"], "fp")
+            self.assertEqual(summary["lock_release"]["status"], "released")
 
     def test_apply_mister_to_thor_save_sync_through_s3_with_sftp_devices(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -337,7 +341,9 @@ class FakeS3Client:
         self._require(Key)
         return {"Body": io.BytesIO(self.objects[Key])}
 
-    def put_object(self, Bucket: str, Key: str, Body: bytes, **_kwargs: object) -> None:
+    def put_object(self, Bucket: str, Key: str, Body: bytes, **kwargs: object) -> None:
+        if kwargs.get("IfNoneMatch") == "*" and Key in self.objects:
+            raise FakePreconditionFailed(Key)
         self.objects[Key] = Body
 
     def head_object(self, Bucket: str, Key: str) -> dict:
@@ -375,6 +381,12 @@ class FakeNotFound(Exception):
     def __init__(self, key: str) -> None:
         super().__init__(key)
         self.response = {"Error": {"Code": "NoSuchKey"}}
+
+
+class FakePreconditionFailed(Exception):
+    def __init__(self, key: str) -> None:
+        super().__init__(key)
+        self.response = {"Error": {"Code": "PreconditionFailed"}}
 
 
 class FakeRemoteClient:

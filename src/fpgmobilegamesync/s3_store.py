@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import os
 import hashlib
+import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -179,6 +180,61 @@ class S3ObjectStore:
         self.copy_object(sync_key, backup_key)
         return backup_key
 
+    def acquire_lock(
+        self,
+        name: str = "sync",
+        owner: str = "unknown",
+        ttl_seconds: int = 1800,
+        now_utc: datetime | None = None,
+    ) -> dict[str, Any]:
+        if ttl_seconds <= 0:
+            raise ObjectStoreError("lock TTL must be positive")
+        now = now_utc or datetime.now(timezone.utc)
+        lock_key = f"locks/{name}.json"
+        existing = self._read_lock(lock_key)
+        if existing is not None:
+            expires_at = _parse_lock_time(existing.get("expires_at_utc"))
+            if expires_at is None or expires_at > now:
+                raise ObjectStoreError(
+                    f"S3 lock already held: {lock_key}; owner={existing.get('owner')}; "
+                    f"expires_at_utc={existing.get('expires_at_utc')}"
+                )
+            self.delete_object(lock_key)
+
+        lock = {
+            "name": name,
+            "owner": owner,
+            "token": uuid.uuid4().hex,
+            "acquired_at_utc": _format_lock_time(now),
+            "expires_at_utc": _format_lock_time(now + timedelta(seconds=ttl_seconds)),
+            "ttl_seconds": ttl_seconds,
+            "sync_key": lock_key,
+        }
+        body = json.dumps(lock, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+        try:
+            self.client.put_object(
+                Bucket=self.bucket,
+                Key=self._remote_key(lock_key),
+                Body=body,
+                ContentType="application/json",
+                IfNoneMatch="*",
+            )
+        except Exception as exc:
+            if _is_precondition_failed_error(exc):
+                raise ObjectStoreError(f"S3 lock already held: {lock_key}") from exc
+            raise ObjectStoreError(f"failed to acquire S3 lock {lock_key}: {exc}") from exc
+        return lock
+
+    def release_lock(self, lock: dict[str, Any]) -> dict[str, Any]:
+        lock_key = str(lock.get("sync_key") or f"locks/{lock.get('name', 'sync')}.json")
+        current = self._read_lock(lock_key)
+        if current is None:
+            return {"status": "missing", "sync_key": lock_key}
+        if current.get("token") != lock.get("token"):
+            raise ObjectStoreError(f"S3 lock token mismatch: {lock_key}")
+        self.delete_object(lock_key)
+        return {"status": "released", "sync_key": lock_key}
+
     def list_trash(self) -> dict[str, Any]:
         items = []
         for entry in self._list_objects("trash/"):
@@ -275,6 +331,25 @@ class S3ObjectStore:
             return _read_body(response["Body"])
         except KeyError as exc:
             raise ObjectStoreError(f"invalid S3 response for object {sync_key}") from exc
+
+    def _read_lock(self, lock_key: str) -> dict[str, Any] | None:
+        try:
+            response = self.client.get_object(
+                Bucket=self.bucket,
+                Key=self._remote_key(lock_key),
+            )
+        except Exception as exc:
+            if _is_missing_object_error(exc):
+                return None
+            raise ObjectStoreError(f"failed to read S3 lock {lock_key}: {exc}") from exc
+        try:
+            data = _read_body(response["Body"])
+            lock = json.loads(data.decode("utf-8"))
+        except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ObjectStoreError(f"invalid S3 lock: {lock_key}") from exc
+        if not isinstance(lock, dict):
+            raise ObjectStoreError(f"invalid S3 lock: {lock_key}")
+        return lock
 
     def _scan_live_object(self, sync_key: str) -> dict[str, Any] | None:
         parts = Path(sync_key).parts
@@ -429,5 +504,29 @@ def _is_missing_object_error(exc: Exception) -> bool:
     return exc.__class__.__name__ in {"NoSuchKey", "NotFound"}
 
 
+def _is_precondition_failed_error(exc: Exception) -> bool:
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        code = response.get("Error", {}).get("Code")
+        if str(code) in {"PreconditionFailed", "412"}:
+            return True
+    return exc.__class__.__name__ in {"PreconditionFailed"}
+
+
 def _timestamp_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+
+
+def _format_lock_time(value: datetime) -> str:
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_lock_time(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    for pattern in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H-%M-%SZ"):
+        try:
+            return datetime.strptime(value, pattern).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None

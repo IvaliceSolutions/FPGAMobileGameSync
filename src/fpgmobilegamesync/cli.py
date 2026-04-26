@@ -456,6 +456,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip conflict actions instead of refusing the plan during apply.",
     )
     sync_parser.add_argument(
+        "--no-lock",
+        action="store_true",
+        help="Disable the S3 sync lock during --apply. Intended only for recovery/debugging.",
+    )
+    sync_parser.add_argument(
+        "--lock-ttl-seconds",
+        type=int,
+        default=1800,
+        help="S3 sync lock TTL in seconds. Defaults to 1800.",
+    )
+    sync_parser.add_argument(
+        "--lock-owner",
+        help="Optional owner label recorded in the S3 sync lock.",
+    )
+    sync_parser.add_argument(
         "--pretty",
         action="store_true",
         help="Pretty-print JSON output.",
@@ -730,6 +745,9 @@ def main(argv: list[str] | None = None) -> int:
                     allow_conflicts=args.allow_conflicts,
                     report_dir=Path(args.report_dir) if args.report_dir else None,
                     scan_backend=args.scan_backend,
+                    use_lock=not args.no_lock,
+                    lock_ttl_seconds=args.lock_ttl_seconds,
+                    lock_owner=args.lock_owner,
                 )
             else:
                 raise SyncError(f"unsupported sync backend: {args.backend}")
