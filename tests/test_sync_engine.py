@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import io
+import posixpath
 import subprocess
 import sys
 import tempfile
@@ -9,6 +10,7 @@ import unittest
 from pathlib import Path
 
 from fpgmobilegamesync.s3_store import S3ObjectStore
+from fpgmobilegamesync.sftp_client import RemoteDirEntry, RemoteStat, SftpError
 from fpgmobilegamesync.sync_engine import run_local_sync, run_s3_sync
 
 
@@ -147,6 +149,49 @@ class SyncEngineTests(unittest.TestCase):
             self.assertEqual(summary["backend"], "s3")
             self.assertEqual(summary["store"]["prefix"], "fp")
 
+    def test_apply_mister_to_thor_save_sync_through_s3_with_sftp_devices(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report_dir = Path(tmp) / "reports" / "sftp-run"
+            mister_client = FakeRemoteClient(
+                {
+                    "/media/fat/saves/GBA/Golden Sun.sav": b"save-data",
+                }
+            )
+            thor_client = FakeRemoteClient({})
+            s3_client = FakeS3Client({})
+            store = S3ObjectStore(client=s3_client, bucket="bucket", prefix="fp")
+
+            result = run_s3_sync(
+                config=_remote_config(),
+                direction="mister-to-thor",
+                systems=["gba"],
+                types=["saves"],
+                apply=True,
+                timestamp_utc="2026-04-26T22-30-00Z",
+                report_dir=report_dir,
+                store=store,
+                scan_backend="sftp",
+                sftp_clients={
+                    "mister": mister_client,
+                    "thor": thor_client,
+                },
+            )
+
+            self.assertFalse(result["dry_run"])
+            self.assertEqual(result["scan_backend"], "sftp")
+            self.assertEqual(result["upload_plan"]["summary"]["upload"], 1)
+            self.assertEqual(result["download_plan"]["summary"]["download"], 1)
+            self.assertEqual(
+                s3_client.objects["fp/systems/gba/saves/Golden Sun.sav"],
+                b"save-data",
+            )
+            self.assertEqual(
+                thor_client.files["/storage/emulated/0/RetroArch/saves/GBA/Golden Sun.srm"],
+                b"save-data",
+            )
+            summary = json.loads((report_dir / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["scan_backend"], "sftp")
+
 
 def _config(mister_root: Path, thor_root: Path) -> dict:
     return {
@@ -262,6 +307,92 @@ class FakeNotFound(Exception):
     def __init__(self, key: str) -> None:
         super().__init__(key)
         self.response = {"Error": {"Code": "NoSuchKey"}}
+
+
+class FakeRemoteClient:
+    def __init__(self, files: dict[str, bytes]) -> None:
+        self.files = {_normalize(path): data for path, data in files.items()}
+
+    def stat(self, path: str) -> RemoteStat:
+        path = _normalize(path)
+        if path in self.files:
+            return RemoteStat(
+                size=len(self.files[path]),
+                modified_ns=1,
+                is_file=True,
+                is_dir=False,
+            )
+        if self._is_dir(path):
+            return RemoteStat(size=0, modified_ns=1, is_file=False, is_dir=True)
+        raise SftpError(f"missing: {path}")
+
+    def listdir(self, path: str) -> list[RemoteDirEntry]:
+        path = _normalize(path)
+        if not self._is_dir(path):
+            raise SftpError(f"missing: {path}")
+        names = set()
+        prefix = path.rstrip("/") + "/"
+        for file_path in self.files:
+            if file_path.startswith(prefix):
+                remainder = file_path[len(prefix) :]
+                names.add(remainder.split("/", 1)[0])
+        return [
+            RemoteDirEntry(name=name, stat=self.stat(posixpath.join(path, name)))
+            for name in sorted(names)
+        ]
+
+    def read_file(self, path: str) -> bytes:
+        path = _normalize(path)
+        if path not in self.files:
+            raise SftpError(f"missing: {path}")
+        return self.files[path]
+
+    def write_file(self, path: str, data: bytes) -> None:
+        self.files[_normalize(path)] = data
+
+    def exists(self, path: str) -> bool:
+        try:
+            self.stat(path)
+            return True
+        except SftpError:
+            return False
+
+    def rename(self, old_path: str, new_path: str) -> None:
+        old_path = _normalize(old_path)
+        new_path = _normalize(new_path)
+        if old_path not in self.files:
+            raise SftpError(f"missing: {old_path}")
+        self.files[new_path] = self.files.pop(old_path)
+
+    def close(self) -> None:
+        return None
+
+    def _is_dir(self, path: str) -> bool:
+        prefix = path.rstrip("/") + "/"
+        return any(file_path.startswith(prefix) for file_path in self.files)
+
+
+def _remote_config() -> dict:
+    config = _config(Path("/unused/mister"), Path("/unused/thor"))
+    config["devices"]["mister"]["remote"] = {
+        "protocol": "sftp",
+        "host": "mister.local",
+        "port": 22,
+        "root": "/media/fat",
+        "trash": "/media/fat/.sync_trash",
+    }
+    config["devices"]["thor"]["remote"] = {
+        "protocol": "sftp",
+        "host": "thor.local",
+        "port": 2222,
+        "root": "/storage/emulated/0",
+        "trash": "/storage/emulated/0/RetroArch/.sync_trash",
+    }
+    return config
+
+
+def _normalize(path: str) -> str:
+    return posixpath.normpath(path)
 
 
 if __name__ == "__main__":

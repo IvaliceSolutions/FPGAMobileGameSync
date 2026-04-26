@@ -226,6 +226,22 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
   --pretty
 ```
 
+From a third controller device, use the configured SFTP blocks for MiSTer and
+Thor by adding `--scan-backend sftp`. This scans both devices remotely, uploads
+source changes to Garage/S3, then downloads target changes back over SFTP:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
+  --direction mister-to-thor \
+  --backend s3 \
+  --scan-backend sftp \
+  --report-dir /tmp/fpgms-runs/mister-to-thor-sftp \
+  --system gba \
+  --type saves \
+  --apply \
+  --pretty
+```
+
 For development, mounted shares, or a third controller device, override the
 configured source and target roots:
 
@@ -246,7 +262,8 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
 With the local backend, `--source-root` and `--target-root` may be real local
 paths, mounted network shares, or device filesystems exposed by another tool.
 With the S3 backend, the same overrides let a third controller sync two mounted
-devices through Garage/S3.
+devices through Garage/S3. With `--scan-backend sftp`, the configured remote
+roots are used instead.
 
 When `--report-dir` is provided, the command writes:
 

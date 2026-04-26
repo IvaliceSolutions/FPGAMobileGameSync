@@ -408,6 +408,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Sync backend. The local backend uses a filesystem object-store; s3 uses Garage/S3.",
     )
     sync_parser.add_argument(
+        "--scan-backend",
+        choices=("local", "sftp"),
+        default="local",
+        help="Device scan/apply backend for sync. Use sftp from a third controller device.",
+    )
+    sync_parser.add_argument(
         "--store-root",
         help="Local object-store root directory. Required for --backend local.",
     )
@@ -694,6 +700,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "sync":
             config = load_config(Path(args.config))
             if args.backend == "local":
+                if args.scan_backend != "local":
+                    raise SyncError("--scan-backend sftp requires --backend s3")
                 if not args.store_root:
                     raise SyncError("--store-root is required for local sync")
                 result = run_local_sync(
@@ -721,6 +729,7 @@ def main(argv: list[str] | None = None) -> int:
                     timestamp_utc=args.timestamp_utc,
                     allow_conflicts=args.allow_conflicts,
                     report_dir=Path(args.report_dir) if args.report_dir else None,
+                    scan_backend=args.scan_backend,
                 )
             else:
                 raise SyncError(f"unsupported sync backend: {args.backend}")

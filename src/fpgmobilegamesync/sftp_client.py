@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import posixpath
 import stat as stat_module
 from dataclasses import dataclass
 from typing import Any
@@ -101,6 +102,52 @@ class SftpDeviceClient:
                 return handle.read()
         except Exception as exc:
             raise SftpError(f"failed to read remote file {path}: {exc}") from exc
+
+    def write_file(self, path: str, data: bytes) -> None:
+        self.makedirs(posixpath.dirname(path))
+        try:
+            with self.sftp_client.open(path, "wb") as handle:
+                handle.write(data)
+        except Exception as exc:
+            raise SftpError(f"failed to write remote file {path}: {exc}") from exc
+
+    def exists(self, path: str) -> bool:
+        try:
+            self.stat(path)
+            return True
+        except SftpError:
+            return False
+
+    def rename(self, old_path: str, new_path: str) -> None:
+        self.makedirs(posixpath.dirname(new_path))
+        try:
+            self.sftp_client.rename(old_path, new_path)
+        except Exception as exc:
+            raise SftpError(f"failed to rename remote file {old_path} -> {new_path}: {exc}") from exc
+
+    def remove(self, path: str) -> None:
+        try:
+            self.sftp_client.remove(path)
+        except Exception as exc:
+            raise SftpError(f"failed to remove remote file {path}: {exc}") from exc
+
+    def makedirs(self, path: str) -> None:
+        path = posixpath.normpath(path)
+        if path in {"", "."}:
+            return
+        parts = path.strip("/").split("/")
+        current = "/" if path.startswith("/") else ""
+        for part in parts:
+            current = posixpath.join(current, part) if current else part
+            try:
+                stat = self.stat(current)
+                if not stat.is_dir:
+                    raise SftpError(f"remote path is not a directory: {current}")
+            except SftpError:
+                try:
+                    self.sftp_client.mkdir(current)
+                except Exception as exc:
+                    raise SftpError(f"failed to create remote directory {current}: {exc}") from exc
 
     def close(self) -> None:
         try:
