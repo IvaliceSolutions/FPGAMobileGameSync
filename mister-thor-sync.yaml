@@ -154,6 +154,7 @@ exclusions:
 systems:
   gba:
     display_name: Game Boy Advance
+    retroarch_core: mGBA
     s3:
       games: systems/gba/games
       saves: systems/gba/saves
@@ -220,6 +221,7 @@ systems:
 
   snes:
     display_name: Super Nintendo Entertainment System
+    retroarch_core: Mesen-S
     s3:
       games: systems/snes/games
       saves: systems/snes/saves
@@ -247,6 +249,7 @@ systems:
         - .7z
       saves:
         mister:
+          - .sav
           - .srm
         thor:
           - .srm
@@ -258,8 +261,29 @@ systems:
         - .jpg
         - .jpeg
     save_conversion:
-      strategy: none
-      extension: .srm
+      strategy: raw_same_content
+      mister_to_thor:
+        rename_extension_from:
+          - .sav
+          - .srm
+        rename_extension_to: .srm
+        validate_sizes:
+          - 512
+          - 2048
+          - 8192
+          - 32768
+          - 65536
+          - 131072
+      thor_to_mister:
+        rename_extension_from: .srm
+        rename_extension_to: .sav
+        validate_sizes:
+          - 512
+          - 2048
+          - 8192
+          - 32768
+          - 65536
+          - 131072
     bios_mapping:
       - logical_name: satellaview_bios
         s3_key: systems/snes/bios/bsx_bios.rom
@@ -268,6 +292,7 @@ systems:
 
   psx:
     display_name: Sony PlayStation
+    retroarch_core: SwanStation
     s3:
       games: systems/psx/games
       saves: systems/psx/saves

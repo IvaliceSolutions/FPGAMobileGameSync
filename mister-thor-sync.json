@@ -172,6 +172,7 @@
   "systems": {
     "gba": {
       "display_name": "Game Boy Advance",
+      "retroarch_core": "mGBA",
       "s3": {
         "games": "systems/gba/games",
         "saves": "systems/gba/saves",
@@ -260,6 +261,7 @@
     },
     "snes": {
       "display_name": "Super Nintendo Entertainment System",
+      "retroarch_core": "Mesen-S",
       "s3": {
         "games": "systems/snes/games",
         "saves": "systems/snes/saves",
@@ -294,6 +296,7 @@
         ],
         "saves": {
           "mister": [
+            ".sav",
             ".srm"
           ],
           "thor": [
@@ -311,8 +314,34 @@
         ]
       },
       "save_conversion": {
-        "strategy": "none",
-        "extension": ".srm"
+        "strategy": "raw_same_content",
+        "mister_to_thor": {
+          "rename_extension_from": [
+            ".sav",
+            ".srm"
+          ],
+          "rename_extension_to": ".srm",
+          "validate_sizes": [
+            512,
+            2048,
+            8192,
+            32768,
+            65536,
+            131072
+          ]
+        },
+        "thor_to_mister": {
+          "rename_extension_from": ".srm",
+          "rename_extension_to": ".sav",
+          "validate_sizes": [
+            512,
+            2048,
+            8192,
+            32768,
+            65536,
+            131072
+          ]
+        }
       },
       "bios_mapping": [
         {
@@ -325,6 +354,7 @@
     },
     "psx": {
       "display_name": "Sony PlayStation",
+      "retroarch_core": "SwanStation",
       "s3": {
         "games": "systems/psx/games",
         "saves": "systems/psx/saves",

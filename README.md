@@ -5,9 +5,9 @@ Garage/S3 bucket as the intermediate store.
 
 The first supported systems are:
 
-- Game Boy Advance
-- Super Nintendo
-- Sony PlayStation
+- Game Boy Advance via RetroArch mGBA
+- Super Nintendo via RetroArch Mesen-S
+- Sony PlayStation via RetroArch SwanStation
 
 The sync model is intentionally explicit:
 
@@ -18,6 +18,10 @@ The sync model is intentionally explicit:
 
 Deletes are logical deletes by default. Files are moved to a trash area instead
 of being hard-deleted.
+
+The sync engine is controller-agnostic. It may run on MiSTer, on the AYN Thor,
+or on a third device, as long as the controller can reach both endpoints and the
+Garage/S3 bucket over the network.
 
 ## Current Status
 
@@ -216,6 +220,44 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli apply \
 
 YAML loading requires `PyYAML`. When it is not available, use the generated
 `mister-thor-sync.json` file.
+
+## Save Conversion
+
+Save conversion is currently implemented as safe copy plus validation for the
+three supported systems:
+
+- GBA mGBA: raw save content, MiSTer `.sav` to RetroArch `.srm`.
+- SNES Mesen-S: raw save content, MiSTer `.sav` or `.srm` to RetroArch `.srm`.
+- PSX SwanStation: raw 128 KiB memory card, MiSTer `.sav` or `.mcd` to
+  RetroArch `.srm`.
+
+Convert a MiSTer GBA save:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli convert-save \
+  --system gba \
+  --direction mister-to-thor \
+  --source "/path/to/Golden Sun (FR).sav" \
+  --output /tmp/out
+```
+
+For PSX, the RetroArch save may need to use the exact game folder name. Use
+`--game-folder` for that:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli convert-save \
+  --system psx \
+  --direction mister-to-thor \
+  --source "/path/to/Final Fantasy 9 (FR).sav" \
+  --output /tmp/out \
+  --game-folder "/storage/emulated/0/RetroArch/games/PSX/Final Fantasy IX"
+```
+
+This writes:
+
+```text
+/tmp/out/Final Fantasy IX.srm
+```
 
 The future sync engine will use these manifests to detect:
 

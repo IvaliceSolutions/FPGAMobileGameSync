@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .compare import CompareError, compare_manifests, load_manifest
 from .config import ConfigError, load_config
+from .converter import ConversionError, convert_save_file, expected_output_suffix
 from .executor import (
     ApplyError,
     apply_plan_to_local_store,
@@ -187,6 +188,46 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pretty-print JSON output.",
     )
 
+    convert_parser = subparsers.add_parser(
+        "convert-save",
+        help="Convert or validate one save file for a sync direction.",
+    )
+    convert_parser.add_argument(
+        "--system",
+        required=True,
+        choices=("gba", "snes", "psx"),
+        help="System save format to convert.",
+    )
+    convert_parser.add_argument(
+        "--direction",
+        required=True,
+        choices=("mister-to-thor", "thor-to-mister"),
+        help="Conversion direction.",
+    )
+    convert_parser.add_argument(
+        "--source",
+        required=True,
+        help="Source save file.",
+    )
+    convert_parser.add_argument(
+        "--output",
+        required=True,
+        help="Output save file or output directory.",
+    )
+    convert_parser.add_argument(
+        "--output-stem",
+        help="Output filename stem to use when --output is a directory.",
+    )
+    convert_parser.add_argument(
+        "--game-folder",
+        help="PSX game folder; its folder name is used as output stem when --output is a directory.",
+    )
+    convert_parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output.",
+    )
+
     return parser
 
 
@@ -281,10 +322,37 @@ def main(argv: list[str] | None = None) -> int:
             )
             sys.stdout.write("\n")
             return 0
+        if args.command == "convert-save":
+            config = load_config(Path(args.config))
+            source_path = Path(args.source)
+            output_path = _resolve_save_output_path(
+                config=config,
+                system=args.system,
+                direction=args.direction,
+                source_path=source_path,
+                output=Path(args.output),
+                output_stem=_save_output_stem(args.output_stem, args.game_folder),
+            )
+            result = convert_save_file(
+                config=config,
+                system=args.system,
+                direction=args.direction,
+                source_path=source_path,
+                output_path=output_path,
+            )
+            json.dump(
+                result,
+                sys.stdout,
+                indent=2 if args.pretty else None,
+                sort_keys=True,
+            )
+            sys.stdout.write("\n")
+            return 0
     except (
         ApplyError,
         CompareError,
         ConfigError,
+        ConversionError,
         ObjectStoreError,
         PlanError,
         ScanError,
@@ -293,6 +361,29 @@ def main(argv: list[str] | None = None) -> int:
 
     parser.exit(2, "error: unknown command\n")
     return 2
+
+
+def _resolve_save_output_path(
+    config: dict,
+    system: str,
+    direction: str,
+    source_path: Path,
+    output: Path,
+    output_stem: str | None = None,
+) -> Path:
+    if output.exists() and output.is_dir():
+        suffix = expected_output_suffix(config, system, direction) or source_path.suffix
+        stem = output_stem or source_path.stem
+        return output / f"{stem}{suffix}"
+    return output
+
+
+def _save_output_stem(output_stem: str | None, game_folder: str | None) -> str | None:
+    if output_stem:
+        return output_stem
+    if game_folder:
+        return Path(game_folder).name
+    return None
 
 
 if __name__ == "__main__":
