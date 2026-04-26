@@ -234,6 +234,26 @@ Trash objects are moved under:
 trash/<timestamp-utc>/<origin-device>/systems/...
 ```
 
+List logical deletes:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli store trash list \
+  --root /tmp/fpgms-store \
+  --pretty
+```
+
+Restore one trash entry to its original sync key:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli store trash restore \
+  --root /tmp/fpgms-store \
+  --trash-key "trash/2026-04-26T20-00-00Z/mister/systems/gba/saves/Golden Sun.sav" \
+  --pretty
+```
+
+Restore refuses to replace an existing object unless `--overwrite` is passed.
+When overwriting, the replaced object is copied under `backups/` first.
+
 ## Applying A Plan To The Local Object Store
 
 Apply a plan against the local object-store backend:

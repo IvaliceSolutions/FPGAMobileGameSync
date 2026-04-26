@@ -117,6 +117,61 @@ class LocalObjectStore:
         self.copy_object(sync_key, backup_key)
         return backup_key
 
+    def list_trash(self) -> dict[str, Any]:
+        items = []
+        for path in _walk_files(self.root / "trash"):
+            item = _scan_trash_object(self.root, path)
+            if item is not None:
+                items.append(item)
+        return {
+            "device": "s3",
+            "trash_root": str(self.root / "trash"),
+            "items": sorted(items, key=lambda item: item["trash_key"]),
+            "summary": {
+                "item_count": len(items),
+                "total_size": sum(item["size"] for item in items),
+            },
+        }
+
+    def restore_trash_object(
+        self,
+        trash_key: str,
+        to_sync_key: str | None = None,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        item = _trash_item_from_key(self.root, trash_key)
+        target_key = to_sync_key or item["original_sync_key"]
+        _require_systems_sync_key(target_key)
+        source_path = self._object_path(trash_key)
+        if not source_path.exists():
+            raise ObjectStoreError(f"trash object not found: {trash_key}")
+        target_path = self._object_path(target_key)
+        backup_key = None
+        if target_path.exists() and not overwrite:
+            raise ObjectStoreError(
+                f"restore target already exists: {target_key}; pass overwrite to replace it"
+            )
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        if target_path.exists():
+            backup_key = self.backup_object(target_key, origin_device="restore")
+            target_path.unlink()
+        shutil.move(str(source_path), str(target_path))
+        _prune_empty_dirs(source_path.parent, self.root)
+        stat = target_path.stat()
+        sha256 = _sha256(target_path)
+        result = {
+            "status": "restored",
+            "trash_key": trash_key,
+            "restored_sync_key": target_key,
+            "origin_device": item["origin_device"],
+            "trashed_at_utc": item["trashed_at_utc"],
+            "size": stat.st_size,
+            "sha256": sha256,
+        }
+        if backup_key is not None:
+            result["backup_key"] = backup_key
+        return result
+
     def write_manifest(self, manifest: dict[str, Any], key: str = "manifests/s3.json") -> None:
         target_path = self._object_path(key)
         target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -161,6 +216,53 @@ def _scan_object(root: Path, path: Path) -> ObjectItem | None:
         native_sha256=sha256,
         canonical_sha256=sha256,
     )
+
+
+def _scan_trash_object(root: Path, path: Path) -> dict[str, Any] | None:
+    relative_path = str(path.relative_to(root))
+    try:
+        item = _trash_item_from_key(root, relative_path)
+    except ObjectStoreError:
+        return None
+    stat = path.stat()
+    sha256 = _sha256(path)
+    return {
+        **item,
+        "absolute_path": str(path),
+        "size": stat.st_size,
+        "sha256": sha256,
+    }
+
+
+def _trash_item_from_key(root: Path, trash_key: str) -> dict[str, str]:
+    parts = Path(trash_key).parts
+    if len(parts) < 5 or parts[0] != "trash":
+        raise ObjectStoreError(f"invalid trash key: {trash_key}")
+    original_sync_key = str(Path(*parts[3:]))
+    original_parts = Path(original_sync_key).parts
+    if len(original_parts) < 4 or original_parts[0] != "systems":
+        raise ObjectStoreError(f"invalid original sync key in trash key: {trash_key}")
+    _require_systems_sync_key(original_sync_key)
+    trash_path = (root / trash_key).resolve()
+    try:
+        trash_path.relative_to(root.resolve())
+    except ValueError as exc:
+        raise ObjectStoreError(f"trash key escapes store root: {trash_key}") from exc
+    return {
+        "trash_key": trash_key,
+        "trashed_at_utc": parts[1],
+        "origin_device": parts[2],
+        "original_sync_key": original_sync_key,
+        "system": original_parts[1],
+        "type": original_parts[2],
+        "content_path": str(Path(*original_parts[3:])),
+    }
+
+
+def _require_systems_sync_key(sync_key: str) -> None:
+    parts = Path(sync_key).parts
+    if len(parts) < 4 or parts[0] != "systems":
+        raise ObjectStoreError(f"invalid systems sync key: {sync_key}")
 
 
 def _walk_files(root: Path) -> Iterable[Path]:

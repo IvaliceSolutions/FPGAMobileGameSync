@@ -152,6 +152,56 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Pretty-print JSON output.",
     )
+    store_trash_parser = store_subparsers.add_parser(
+        "trash",
+        help="List or restore local object-store trash entries.",
+    )
+    store_trash_subparsers = store_trash_parser.add_subparsers(
+        dest="store_trash_command",
+        required=True,
+    )
+    store_trash_list_parser = store_trash_subparsers.add_parser(
+        "list",
+        help="List logical deletes in the local object-store trash.",
+    )
+    store_trash_list_parser.add_argument(
+        "--root",
+        required=True,
+        help="Object-store root directory.",
+    )
+    store_trash_list_parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output.",
+    )
+    store_trash_restore_parser = store_trash_subparsers.add_parser(
+        "restore",
+        help="Restore one object from the local object-store trash.",
+    )
+    store_trash_restore_parser.add_argument(
+        "--root",
+        required=True,
+        help="Object-store root directory.",
+    )
+    store_trash_restore_parser.add_argument(
+        "--trash-key",
+        required=True,
+        help="Trash key to restore, as returned by store trash list.",
+    )
+    store_trash_restore_parser.add_argument(
+        "--to-key",
+        help="Optional destination sync key. Defaults to the original sync key.",
+    )
+    store_trash_restore_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Allow restore to replace an existing object at the destination key.",
+    )
+    store_trash_restore_parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output.",
+    )
 
     apply_parser = subparsers.add_parser(
         "apply",
@@ -389,6 +439,26 @@ def main(argv: list[str] | None = None) -> int:
             manifest = LocalObjectStore(Path(args.root)).scan()
             json.dump(
                 manifest,
+                sys.stdout,
+                indent=2 if args.pretty else None,
+                sort_keys=True,
+            )
+            sys.stdout.write("\n")
+            return 0
+        if args.command == "store" and args.store_command == "trash":
+            store = LocalObjectStore(Path(args.root))
+            if args.store_trash_command == "list":
+                result = store.list_trash()
+            elif args.store_trash_command == "restore":
+                result = store.restore_trash_object(
+                    trash_key=args.trash_key,
+                    to_sync_key=args.to_key,
+                    overwrite=args.overwrite,
+                )
+            else:
+                raise ObjectStoreError(f"unknown trash command: {args.store_trash_command}")
+            json.dump(
+                result,
                 sys.stdout,
                 indent=2 if args.pretty else None,
                 sort_keys=True,
