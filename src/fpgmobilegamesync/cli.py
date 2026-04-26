@@ -25,6 +25,7 @@ from .executor import (
 )
 from .object_store import LocalObjectStore, ObjectStoreError
 from .planner import PlanError, build_plan
+from .s3_store import S3ObjectStore
 from .scanner import ScanError, scan
 from .sync_engine import SyncError, run_local_sync
 
@@ -140,12 +141,17 @@ def build_parser() -> argparse.ArgumentParser:
     store_subparsers = store_parser.add_subparsers(dest="store_command", required=True)
     store_scan_parser = store_subparsers.add_parser(
         "scan",
-        help="Scan local object-store contents.",
+        help="Scan object-store contents.",
+    )
+    store_scan_parser.add_argument(
+        "--backend",
+        choices=("local", "s3"),
+        default="local",
+        help="Store backend to scan.",
     )
     store_scan_parser.add_argument(
         "--root",
-        required=True,
-        help="Object-store root directory.",
+        help="Local object-store root directory.",
     )
     store_scan_parser.add_argument(
         "--pretty",
@@ -162,12 +168,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     store_trash_list_parser = store_trash_subparsers.add_parser(
         "list",
-        help="List logical deletes in the local object-store trash.",
+        help="List logical deletes in the object-store trash.",
+    )
+    store_trash_list_parser.add_argument(
+        "--backend",
+        choices=("local", "s3"),
+        default="local",
+        help="Store backend to inspect.",
     )
     store_trash_list_parser.add_argument(
         "--root",
-        required=True,
-        help="Object-store root directory.",
+        help="Local object-store root directory.",
     )
     store_trash_list_parser.add_argument(
         "--pretty",
@@ -176,12 +187,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     store_trash_restore_parser = store_trash_subparsers.add_parser(
         "restore",
-        help="Restore one object from the local object-store trash.",
+        help="Restore one object from the object-store trash.",
+    )
+    store_trash_restore_parser.add_argument(
+        "--backend",
+        choices=("local", "s3"),
+        default="local",
+        help="Store backend to restore from.",
     )
     store_trash_restore_parser.add_argument(
         "--root",
-        required=True,
-        help="Object-store root directory.",
+        help="Local object-store root directory.",
     )
     store_trash_restore_parser.add_argument(
         "--trash-key",
@@ -436,7 +452,8 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.write("\n")
             return 0
         if args.command == "store" and args.store_command == "scan":
-            manifest = LocalObjectStore(Path(args.root)).scan()
+            config = load_config(Path(args.config))
+            manifest = _store_from_args(args, config).scan()
             json.dump(
                 manifest,
                 sys.stdout,
@@ -446,7 +463,8 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.write("\n")
             return 0
         if args.command == "store" and args.store_command == "trash":
-            store = LocalObjectStore(Path(args.root))
+            config = load_config(Path(args.config))
+            store = _store_from_args(args, config)
             if args.store_trash_command == "list":
                 result = store.list_trash()
             elif args.store_trash_command == "restore":
@@ -662,6 +680,17 @@ def _infer_retroarch_game_file(
     if not mister_game_folder:
         return None
     return infer_psx_retroarch_game_file(Path(mister_game_folder))
+
+
+def _store_from_args(args: argparse.Namespace, config: dict) -> LocalObjectStore | S3ObjectStore:
+    backend = getattr(args, "backend", "local")
+    if backend == "local":
+        if not args.root:
+            raise ObjectStoreError("--root is required for the local store backend")
+        return LocalObjectStore(Path(args.root))
+    if backend == "s3":
+        return S3ObjectStore.from_config(config)
+    raise ObjectStoreError(f"unsupported store backend: {backend}")
 
 
 if __name__ == "__main__":

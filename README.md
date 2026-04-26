@@ -254,6 +254,50 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli store trash restore \
 Restore refuses to replace an existing object unless `--overwrite` is passed.
 When overwriting, the replaced object is copied under `backups/` first.
 
+## Garage/S3 Store Inspection
+
+The real Garage/S3 backend reads its connection settings from
+`mister-thor-sync.json` and secrets from environment variables:
+
+```sh
+export MISTER_THOR_S3_ENDPOINT_URL="https://garage.example"
+export MISTER_THOR_S3_ACCESS_KEY_ID="..."
+export MISTER_THOR_S3_SECRET_ACCESS_KEY="..."
+```
+
+Install the optional S3 dependency before using this backend:
+
+```sh
+python3 -m pip install ".[s3]"
+```
+
+Scan currently reads the stored `manifests/s3.json` file instead of downloading
+and hashing every object in the bucket:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli store scan \
+  --backend s3 \
+  --pretty
+```
+
+List and restore logical deletes on Garage/S3:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli store trash list \
+  --backend s3 \
+  --pretty
+```
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli store trash restore \
+  --backend s3 \
+  --trash-key "trash/2026-04-26T20-00-00Z/mister/systems/gba/saves/Golden Sun.sav" \
+  --pretty
+```
+
+As with the local backend, restore refuses to overwrite unless `--overwrite` is
+passed, and overwritten objects are copied under `backups/` first.
+
 ## Applying A Plan To The Local Object Store
 
 Apply a plan against the local object-store backend:
