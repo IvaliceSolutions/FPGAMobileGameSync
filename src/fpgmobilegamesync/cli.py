@@ -14,6 +14,7 @@ from .converter import (
     convert_save_file,
     expected_output_suffix,
     infer_psx_retroarch_game_file,
+    retroarch_game_file_stem,
 )
 from .executor import (
     ApplyError,
@@ -422,7 +423,7 @@ def _save_output_stem(
     if output_stem:
         return output_stem
     if retroarch_game_file and direction == "mister-to-thor":
-        return Path(retroarch_game_file).stem
+        return retroarch_game_file_stem(retroarch_game_file)
     folder = mister_game_folder or game_folder
     if folder:
         return Path(folder).name
@@ -439,7 +440,7 @@ def _save_metadata(
         metadata["mister_game_folder"] = str(mister_game_folder)
     if retroarch_game_file:
         metadata["retroarch_game_file"] = str(retroarch_game_file)
-        metadata["retroarch_game_file_stem"] = Path(retroarch_game_file).stem
+        metadata["retroarch_game_file_stem"] = retroarch_game_file_stem(retroarch_game_file)
     if retroarch_inference:
         metadata["retroarch_game_file_inference"] = {
             "strategy": retroarch_inference["strategy"],

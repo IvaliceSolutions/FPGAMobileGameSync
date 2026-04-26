@@ -32,8 +32,10 @@ def compare_manifests(
     target_items = [_normalise_item(item) for item in target.get("items", [])]
 
     target_by_path = {_path_key(item): item for item in target_items}
+    target_by_folded_path: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
     target_by_hash: dict[tuple[str, str, str, int], list[dict[str, Any]]] = defaultdict(list)
     for item in target_items:
+        target_by_folded_path[_folded_path_key(item)].append(item)
         target_by_hash[_hash_key(item)].append(item)
 
     matched_target_paths: set[tuple[str, str, str]] = set()
@@ -48,6 +50,38 @@ def compare_manifests(
                 actions.append(_action("unchanged", source_item, same_path_target))
             else:
                 actions.append(_action("modified", source_item, same_path_target))
+            continue
+
+        same_folded_path_targets = [
+            item
+            for item in target_by_folded_path.get(_folded_path_key(source_item), [])
+            if _path_key(item) not in matched_target_paths
+        ]
+        if len(same_folded_path_targets) == 1:
+            target_item = same_folded_path_targets[0]
+            matched_target_paths.add(_path_key(target_item))
+            if _same_content(source_item, target_item):
+                actions.append(
+                    _action(
+                        _rename_status(
+                            old_path=target_item["content_path"],
+                            new_path=source_item["content_path"],
+                        ),
+                        source_item,
+                        target_item,
+                    )
+                )
+            else:
+                actions.append(_action("modified_renamed", source_item, target_item))
+            continue
+        if len(same_folded_path_targets) > 1:
+            actions.append(
+                {
+                    "status": "case_conflict",
+                    "source": source_item,
+                    "candidates": same_folded_path_targets,
+                }
+            )
             continue
 
         same_hash_targets = [
@@ -109,6 +143,14 @@ def _normalise_item(item: dict[str, Any]) -> dict[str, Any]:
 
 def _path_key(item: dict[str, Any]) -> tuple[str, str, str]:
     return (item["system"], item["type"], item["content_path"])
+
+
+def _folded_path_key(item: dict[str, Any]) -> tuple[str, str, str]:
+    return (item["system"], item["type"], _casefold_path(item["content_path"]))
+
+
+def _casefold_path(path: str) -> str:
+    return "/".join(part.casefold() for part in Path(path).parts)
 
 
 def _hash_key(item: dict[str, Any]) -> tuple[str, str, str, int]:

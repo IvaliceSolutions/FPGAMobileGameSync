@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -150,13 +151,20 @@ def _upload(
         raise ApplyError(f"source file not found: {source_path}")
 
     target_key = _target_sync_key(action)
+    existing_target_key = action.get("target", {}).get("sync_key", target_key)
     backup_key = None
-    if action.get("backup_target_before_apply") and store.object_exists(target_key):
+    if action.get("backup_target_before_apply") and store.object_exists(existing_target_key):
         backup_key = store.backup_object(
-            target_key,
+            existing_target_key,
             origin_device=origin_device,
             timestamp_utc=timestamp_utc,
         )
+    if (
+        action.get("rename_target_before_copy")
+        and existing_target_key != target_key
+        and store.object_exists(existing_target_key)
+    ):
+        store.rename_object(existing_target_key, target_key)
     store.put_file(source_path, target_key)
 
     result = {
@@ -182,15 +190,22 @@ def _download(
         raise ApplyError(f"source file not found: {source_path}")
 
     target_path = _target_path_for_download(action, target_root)
+    existing_target_path = _existing_target_path_for_download(action, target_root)
     backup_path = None
-    if action.get("backup_target_before_apply") and target_path.exists():
+    if action.get("backup_target_before_apply") and existing_target_path.exists():
         backup_path = _backup_local_file(
-            target_path,
+            existing_target_path,
             target_root,
             trash_root,
             origin_device,
             timestamp_utc,
         )
+    if (
+        action.get("rename_target_before_copy")
+        and existing_target_path != target_path
+        and existing_target_path.exists()
+    ):
+        _rename_path_case_aware(existing_target_path, target_path)
     target_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_path, target_path)
 
@@ -221,8 +236,7 @@ def _rename_local(action: dict[str, Any], target_root: Path) -> dict[str, Any]:
     new_path = target_root / action["source"]["content_path"]
     if not old_path.exists():
         raise ApplyError(f"target file not found for rename: {old_path}")
-    new_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(old_path), str(new_path))
+    _rename_path_case_aware(old_path, new_path)
     _prune_empty_dirs(old_path.parent, target_root)
     return {
         "operation": "rename_local",
@@ -283,15 +297,44 @@ def _trash_local(
 
 
 def _target_sync_key(action: dict[str, Any]) -> str:
+    if action.get("rename_target_before_copy"):
+        return action["source"]["sync_key"]
     if "target" in action:
         return action["target"]["sync_key"]
     return action["source"]["sync_key"]
 
 
 def _target_path_for_download(action: dict[str, Any], target_root: Path) -> Path:
+    if action.get("rename_target_before_copy"):
+        return target_root / action["source"]["content_path"]
     if "target" in action:
         return target_root / action["target"]["content_path"]
     return target_root / action["source"]["content_path"]
+
+
+def _existing_target_path_for_download(action: dict[str, Any], target_root: Path) -> Path:
+    if "target" in action:
+        return target_root / action["target"]["content_path"]
+    return target_root / action["source"]["content_path"]
+
+
+def _rename_path_case_aware(old_path: Path, new_path: Path) -> None:
+    new_path.parent.mkdir(parents=True, exist_ok=True)
+    if _same_filesystem_entry(old_path, new_path):
+        temp_path = old_path.with_name(
+            f".{old_path.name}.case-rename-{uuid.uuid4().hex}.tmp"
+        )
+        old_path.rename(temp_path)
+        temp_path.rename(new_path)
+        return
+    shutil.move(str(old_path), str(new_path))
+
+
+def _same_filesystem_entry(old_path: Path, new_path: Path) -> bool:
+    try:
+        return old_path.samefile(new_path)
+    except FileNotFoundError:
+        return False
 
 
 def _backup_local_file(

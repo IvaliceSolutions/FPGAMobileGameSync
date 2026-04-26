@@ -15,6 +15,15 @@ class ConversionError(Exception):
 PSX_GAME_EXTENSIONS = {".iso", ".bin", ".chd", ".cue", ".m3u"}
 
 
+def retroarch_game_file_stem(value: str) -> str:
+    """Return the RetroArch save stem without assuming unknown game extensions."""
+    name = Path(value).name
+    suffix = Path(name).suffix
+    if suffix.lower() in PSX_GAME_EXTENSIONS:
+        return name[: -len(suffix)]
+    return name
+
+
 def infer_psx_retroarch_game_file(game_folder: Path) -> dict[str, Any]:
     if not game_folder.exists():
         raise ConversionError(f"PSX game folder not found: {game_folder}")

@@ -58,6 +58,30 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(result["summary"]["ambiguous_rename"], 1)
         self.assertEqual(result["summary"]["deleted"], 2)
 
+    def test_compare_detects_case_only_rename_with_changed_content(self) -> None:
+        source = _manifest([_item("gba", "saves", "Pokemon.sav", "new", 4)])
+        target = _manifest([_item("gba", "saves", "pokemon.sav", "old", 4)])
+
+        result = compare_manifests(source, target)
+
+        self.assertEqual(result["summary"]["modified_renamed"], 1)
+        action = result["actions"][0]
+        self.assertEqual(action["source"]["content_path"], "Pokemon.sav")
+        self.assertEqual(action["target"]["content_path"], "pokemon.sav")
+
+    def test_compare_reports_case_conflicts(self) -> None:
+        source = _manifest([_item("gba", "saves", "Pokemon.sav", "new", 4)])
+        target = _manifest(
+            [
+                _item("gba", "saves", "pokemon.sav", "old", 4),
+                _item("gba", "saves", "POKEMON.sav", "older", 4),
+            ]
+        )
+
+        result = compare_manifests(source, target)
+
+        self.assertEqual(result["summary"]["case_conflict"], 1)
+
 
 def _manifest(items: list[dict]) -> dict:
     return {

@@ -66,6 +66,17 @@ def _plan_action(
             "target": action["target"],
             "backup_target_before_apply": True,
         }
+    if status == "modified_renamed":
+        return {
+            "operation": _copy_operation(mode),
+            "reason": "modified_renamed",
+            "source": action["source"],
+            "target": action["target"],
+            "from_content_path": action["target"]["content_path"],
+            "to_content_path": action["source"]["content_path"],
+            "backup_target_before_apply": True,
+            "rename_target_before_copy": True,
+        }
     if status in {"renamed", "moved", "renamed_moved"}:
         return {
             "operation": _rename_operation(mode),
@@ -94,6 +105,14 @@ def _plan_action(
         return {
             "operation": "conflict",
             "reason": "ambiguous_rename",
+            "source": action["source"],
+            "candidates": action["candidates"],
+            "requires_manual_resolution": True,
+        }
+    if status == "case_conflict":
+        return {
+            "operation": "conflict",
+            "reason": "case_conflict",
             "source": action["source"],
             "candidates": action["candidates"],
             "requires_manual_resolution": True,

@@ -9,6 +9,7 @@ from fpgmobilegamesync.converter import (
     ConversionError,
     convert_save_file,
     infer_psx_retroarch_game_file,
+    retroarch_game_file_stem,
 )
 from fpgmobilegamesync.cli import (
     _infer_retroarch_game_file,
@@ -113,6 +114,41 @@ class ConverterTests(unittest.TestCase):
                 result["metadata"]["retroarch_game_file_stem"],
                 "Final Fantasy IX",
             )
+
+    def test_psx_retroarch_game_file_can_be_a_stem_without_known_extension(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "Final Fantasy 9 (FR).sav"
+            output_dir = root / "out"
+            output_dir.mkdir()
+            source.write_bytes(b"x" * 131072)
+
+            output = _resolve_save_output_path(
+                self.config,
+                "psx",
+                "mister-to-thor",
+                source,
+                output_dir,
+                output_stem=_save_output_stem(
+                    output_stem=None,
+                    game_folder=None,
+                    mister_game_folder=None,
+                    retroarch_game_file="Final.Fantasy.IX",
+                    direction="mister-to-thor",
+                ),
+            )
+
+            self.assertEqual(output.name, "Final.Fantasy.IX.srm")
+
+    def test_psx_retroarch_game_file_stem_strips_only_known_extensions(self) -> None:
+        self.assertEqual(
+            retroarch_game_file_stem("/games/Final Fantasy IX.CHD"),
+            "Final Fantasy IX",
+        )
+        self.assertEqual(
+            retroarch_game_file_stem("/games/Final.Fantasy.IX"),
+            "Final.Fantasy.IX",
+        )
 
     def test_psx_rejects_non_raw_memory_card_size(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

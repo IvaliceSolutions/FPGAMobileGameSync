@@ -115,6 +115,58 @@ class ExecutorTests(unittest.TestCase):
             with self.assertRaises(ApplyError):
                 apply_plan_to_local_store(plan, store_root=Path(tmp))
 
+    def test_apply_modified_case_rename_to_local_store(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store_root = root / "store"
+            source_root = root / "source"
+            source_root.mkdir()
+            source_file = source_root / "Pokemon.sav"
+            source_file.write_bytes(b"new")
+
+            (store_root / "systems/gba/saves").mkdir(parents=True)
+            (store_root / "systems/gba/saves/pokemon.sav").write_bytes(b"old")
+
+            plan = {
+                "source": "mister",
+                "target": "s3",
+                "actions": [
+                    {
+                        "operation": "upload",
+                        "reason": "modified_renamed",
+                        "backup_target_before_apply": True,
+                        "rename_target_before_copy": True,
+                        "source": _item(source_file, "Pokemon.sav", kind="saves"),
+                        "target": _item(
+                            store_root / "systems/gba/saves/pokemon.sav",
+                            "pokemon.sav",
+                            kind="saves",
+                        ),
+                    }
+                ],
+            }
+
+            apply_plan_to_local_store(
+                plan,
+                store_root=store_root,
+                timestamp_utc="2026-04-26T21-30-00Z",
+            )
+
+            self.assertEqual(
+                (store_root / "systems/gba/saves/Pokemon.sav").read_bytes(),
+                b"new",
+            )
+            self.assertNotIn(
+                "pokemon.sav",
+                {path.name for path in (store_root / "systems/gba/saves").iterdir()},
+            )
+            self.assertTrue(
+                (
+                    store_root
+                    / "backups/2026-04-26T21-30-00Z/mister/systems/gba/saves/pokemon.sav"
+                ).exists()
+            )
+
     def test_apply_download_plan_to_local_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -196,16 +248,62 @@ class ExecutorTests(unittest.TestCase):
             self.assertEqual(result["summary"]["rename_local:applied"], 1)
             self.assertEqual(result["summary"]["trash_local:applied"], 1)
 
+    def test_apply_modified_case_rename_to_local_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store_root = root / "store"
+            target_root = root / "target"
+            trash_root = root / "trash"
+            store_saves = store_root / "systems/gba/saves"
+            store_saves.mkdir(parents=True)
+            target_root.mkdir()
 
-def _item(path: Path, content_path: str) -> dict:
+            source_file = store_saves / "Pokemon.sav"
+            source_file.write_bytes(b"new")
+            (target_root / "pokemon.sav").write_bytes(b"old")
+
+            plan = {
+                "mode": "download",
+                "source": "s3",
+                "target": "thor",
+                "actions": [
+                    {
+                        "operation": "download",
+                        "reason": "modified_renamed",
+                        "backup_target_before_apply": True,
+                        "rename_target_before_copy": True,
+                        "source": _item(source_file, "Pokemon.sav", kind="saves"),
+                        "target": _item(target_root / "pokemon.sav", "pokemon.sav", kind="saves"),
+                    }
+                ],
+            }
+
+            apply_plan_to_local_target(
+                plan,
+                target_root=target_root,
+                trash_root=trash_root,
+                timestamp_utc="2026-04-26T21-45-00Z",
+            )
+
+            self.assertEqual((target_root / "Pokemon.sav").read_bytes(), b"new")
+            self.assertNotIn("pokemon.sav", {path.name for path in target_root.iterdir()})
+            self.assertTrue(
+                (
+                    trash_root
+                    / "backups/2026-04-26T21-45-00Z/s3/pokemon.sav"
+                ).exists()
+            )
+
+
+def _item(path: Path, content_path: str, kind: str = "games") -> dict:
     return {
         "device": "test",
         "system": "gba",
-        "type": "games",
+        "type": kind,
         "absolute_path": str(path),
         "relative_path": content_path,
         "content_path": content_path,
-        "sync_key": f"systems/gba/games/{content_path}",
+        "sync_key": f"systems/gba/{kind}/{content_path}",
         "size": path.stat().st_size if path.exists() else 0,
         "modified_ns": 1,
         "sha256": "test",

@@ -65,6 +65,33 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(plan["summary"]["conflict"], 1)
         self.assertEqual(plan["summary"]["trash_remote"], 2)
 
+    def test_modified_case_rename_is_copied_after_target_rename(self) -> None:
+        source = _manifest([_item("gba", "saves", "Pokemon.sav", "new", 4)])
+        target = _manifest([_item("gba", "saves", "pokemon.sav", "old", 4)])
+
+        plan = build_plan(source, target, mode="upload", source_name="mister", target_name="s3")
+
+        self.assertEqual(plan["summary"]["upload"], 1)
+        action = plan["actions"][0]
+        self.assertEqual(action["reason"], "modified_renamed")
+        self.assertEqual(action["from_content_path"], "pokemon.sav")
+        self.assertEqual(action["to_content_path"], "Pokemon.sav")
+        self.assertTrue(action["backup_target_before_apply"])
+        self.assertTrue(action["rename_target_before_copy"])
+
+    def test_case_conflict_becomes_conflict(self) -> None:
+        source = _manifest([_item("gba", "saves", "Pokemon.sav", "new", 4)])
+        target = _manifest(
+            [
+                _item("gba", "saves", "pokemon.sav", "old", 4),
+                _item("gba", "saves", "POKEMON.sav", "older", 4),
+            ]
+        )
+
+        plan = build_plan(source, target, mode="download")
+
+        self.assertEqual(plan["summary"]["conflict"], 1)
+
 
 def _manifest(items: list[dict]) -> dict:
     return {

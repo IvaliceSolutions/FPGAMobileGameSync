@@ -244,8 +244,10 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli convert-save \
 For PSX, keep both names in metadata:
 
 - `mister_game_folder`: the MiSTer folder containing the game files.
-- `retroarch_game_file`: the RetroArch game file, usually `.chd`, `.cue`, or
-  `.m3u`.
+- `retroarch_game_file`: the RetroArch game file name or full path. Its
+  extension can be unknown; only known PSX extensions are stripped when deriving
+  the save stem.
+- `retroarch_game_file_stem`: the exact save stem to use on Thor/SwanStation.
 
 When converting to Thor/SwanStation, the save name uses the RetroArch game file
 stem, not the MiSTer folder name:
@@ -279,6 +281,11 @@ an accessible PSX folder, the converter tries to infer the game file:
 
 If the first disc cannot be inferred unambiguously, conversion stops and asks
 for `--retroarch-game-file`.
+
+Names are compared case-insensitively for safety, but the source casing remains
+canonical. A case-only rename such as `pokemon.sav` -> `Pokemon.sav` is planned
+as a rename, and if the file content also changed it is backed up, renamed, then
+overwritten with the source file.
 
 The future sync engine will use these manifests to detect:
 

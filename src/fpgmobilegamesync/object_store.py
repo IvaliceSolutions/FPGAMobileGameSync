@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -76,6 +77,16 @@ class LocalObjectStore:
             _prune_empty_dirs(path.parent, self.root)
 
     def rename_object(self, from_sync_key: str, to_sync_key: str) -> None:
+        source_path = self._object_path(from_sync_key)
+        target_path = self._object_path(to_sync_key)
+        if source_path.exists() and _same_filesystem_entry(source_path, target_path):
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = source_path.with_name(
+                f".{source_path.name}.case-rename-{uuid.uuid4().hex}.tmp"
+            )
+            source_path.rename(temp_path)
+            temp_path.rename(target_path)
+            return
         self.copy_object(from_sync_key, to_sync_key)
         self.delete_object(from_sync_key)
 
@@ -157,6 +168,13 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _same_filesystem_entry(source_path: Path, target_path: Path) -> bool:
+    try:
+        return source_path.samefile(target_path)
+    except FileNotFoundError:
+        return False
 
 
 def _timestamp_utc() -> str:
