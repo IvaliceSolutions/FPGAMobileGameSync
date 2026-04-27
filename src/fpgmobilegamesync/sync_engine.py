@@ -101,6 +101,8 @@ def run_local_sync(
         mode="download",
         source_name="s3",
         target_name=target_device,
+        config=runtime_config,
+        target_device=target_device,
     )
     if skip_deletes:
         download_plan = _skip_delete_actions(download_plan)
@@ -282,6 +284,8 @@ def run_s3_sync(
                 mode="download",
                 source_name="s3",
                 target_name=target_device,
+                config=runtime_config,
+                target_device=target_device,
             )
             if skip_deletes:
                 download_plan = _skip_delete_actions(download_plan)

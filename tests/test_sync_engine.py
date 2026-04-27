@@ -59,6 +59,35 @@ class SyncEngineTests(unittest.TestCase):
             self.assertEqual(summary["download_plan_summary"]["download"], 1)
             self.assertIn(str(report_dir / "summary.json"), result["report_files"])
 
+    def test_apply_psx_mapping_repairs_wrong_thor_native_save_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mister_root = root / "mister"
+            thor_root = root / "thor"
+            store_root = root / "store"
+            (mister_root / "saves/PSX").mkdir(parents=True)
+            (thor_root / "RetroArch/saves/SwanStation").mkdir(parents=True)
+            save_data = _raw_psx_card()
+            (mister_root / "saves/PSX/Lunar.sav").write_bytes(save_data)
+            (thor_root / "RetroArch/saves/SwanStation/Lunar.srm").write_bytes(save_data)
+
+            result = run_local_sync(
+                config=_config_with_psx(mister_root, thor_root),
+                direction="mister-to-thor",
+                store_root=store_root,
+                systems=["psx"],
+                types=["saves"],
+                apply=True,
+                timestamp_utc="2026-04-26T20-45-00Z",
+            )
+
+            self.assertEqual(result["download_plan"]["summary"]["rename_local"], 1)
+            self.assertFalse((thor_root / "RetroArch/saves/SwanStation/Lunar.srm").exists())
+            self.assertEqual(
+                (thor_root / "RetroArch/saves/SwanStation/Lunar_fr_cd1.srm").read_bytes(),
+                save_data,
+            )
+
     def test_cli_sync_dry_run_reports_both_plans(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -654,6 +683,69 @@ def _config_with_snes(mister_root: Path, thor_root: Path) -> dict:
         },
     }
     return config
+
+
+def _config_with_psx(mister_root: Path, thor_root: Path) -> dict:
+    config = _config(mister_root, thor_root)
+    config["defaults"]["systems"] = ["psx"]
+    config["systems"]["psx"] = {
+        "paths": {
+            "mister": {
+                "saves": "saves/PSX",
+            },
+            "thor": {
+                "saves": "RetroArch/saves/SwanStation",
+            },
+        },
+        "file_extensions": {
+            "saves": {
+                "mister": [".sav", ".mcd"],
+                "thor": [".srm", ".mcr", ".mcd"],
+            }
+        },
+        "save_conversion": {
+            "strategy": "psx_raw_memory_card",
+            "expected_raw_card_size": 131072,
+            "mister_to_thor": {
+                "accepted_input_extensions": [".sav", ".mcd"],
+                "output_extension": ".srm",
+                "validate_raw_card_size": True,
+            },
+            "thor_to_mister": {
+                "accepted_input_extensions": [".srm", ".mcr", ".mcd"],
+                "output_extension": ".sav",
+                "validate_raw_card_size": True,
+            },
+        },
+    }
+    config["save_mappings"] = {
+        "psx": [
+            {
+                "mister_game_folder": "Lunar",
+                "retroarch_game_file_stem": "Lunar_fr_cd1",
+            }
+        ]
+    }
+    return config
+
+
+def _raw_psx_card() -> bytes:
+    data = bytearray(131072)
+    data[0:2] = b"MC"
+    for entry in range(15):
+        offset = (entry + 1) * 128
+        data[offset] = 0xA0
+    offset = 128
+    data[offset] = 0x51
+    data[offset + 4 : offset + 8] = (8192).to_bytes(4, byteorder="little")
+    data[offset + 10 : offset + 26] = b"BASCUS-00000SAVE"
+    for frame_index in range(16):
+        start = frame_index * 128
+        checksum = 0
+        for byte in data[start : start + 127]:
+            checksum ^= byte
+        data[start + 127] = checksum
+    return bytes(data)
 
 
 class FakeS3Client:

@@ -51,6 +51,71 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(action["to_content_path"], "New Name.gba")
         self.assertFalse(action["copy_delete_required"])
 
+    def test_download_plan_renames_unchanged_save_with_wrong_native_path(self) -> None:
+        source = _manifest([_item("psx", "saves", "Lunar.sav", "same", 131072)])
+        target = _manifest(
+            [
+                _item(
+                    "psx",
+                    "saves",
+                    "Lunar.sav",
+                    "same",
+                    131072,
+                    native_content_path="Lunar.srm",
+                )
+            ]
+        )
+
+        plan = build_plan(
+            source,
+            target,
+            mode="download",
+            source_name="s3",
+            target_name="thor",
+            config=_psx_mapping_config(),
+            target_device="thor",
+        )
+
+        self.assertEqual(plan["summary"]["rename_local"], 1)
+        action = plan["actions"][0]
+        self.assertEqual(action["reason"], "native_path_mismatch")
+        self.assertEqual(action["from_content_path"], "Lunar.srm")
+        self.assertEqual(action["to_content_path"], "Lunar_fr_cd1.srm")
+
+    def test_download_plan_renames_modified_save_before_copy_when_native_path_is_wrong(
+        self,
+    ) -> None:
+        source = _manifest([_item("psx", "saves", "Lunar.sav", "new", 131072)])
+        target = _manifest(
+            [
+                _item(
+                    "psx",
+                    "saves",
+                    "Lunar.sav",
+                    "old",
+                    131072,
+                    native_content_path="Lunar.srm",
+                )
+            ]
+        )
+
+        plan = build_plan(
+            source,
+            target,
+            mode="download",
+            source_name="s3",
+            target_name="thor",
+            config=_psx_mapping_config(),
+            target_device="thor",
+        )
+
+        self.assertEqual(plan["summary"]["download"], 1)
+        action = plan["actions"][0]
+        self.assertEqual(action["reason"], "modified_native_path_mismatch")
+        self.assertEqual(action["from_content_path"], "Lunar.srm")
+        self.assertEqual(action["to_content_path"], "Lunar_fr_cd1.srm")
+        self.assertTrue(action["rename_target_before_copy"])
+
     def test_ambiguous_rename_becomes_conflict(self) -> None:
         source = _manifest([_item("gba", "saves", "Save.sav", "same", 4)])
         target = _manifest(
@@ -99,8 +164,15 @@ def _manifest(items: list[dict]) -> dict:
     }
 
 
-def _item(system: str, kind: str, path: str, sha256: str, size: int) -> dict:
-    return {
+def _item(
+    system: str,
+    kind: str,
+    path: str,
+    sha256: str,
+    size: int,
+    native_content_path: str | None = None,
+) -> dict:
+    item = {
         "device": "test",
         "system": system,
         "type": kind,
@@ -111,6 +183,32 @@ def _item(system: str, kind: str, path: str, sha256: str, size: int) -> dict:
         "size": size,
         "modified_ns": 1,
         "sha256": sha256,
+    }
+    if native_content_path is not None:
+        item["native_content_path"] = native_content_path
+    return item
+
+
+def _psx_mapping_config() -> dict:
+    return {
+        "devices": {"mister": {}, "thor": {}},
+        "systems": {
+            "psx": {
+                "save_conversion": {
+                    "strategy": "psx_raw_memory_card",
+                    "mister_to_thor": {"output_extension": ".srm"},
+                    "thor_to_mister": {"output_extension": ".sav"},
+                }
+            }
+        },
+        "save_mappings": {
+            "psx": [
+                {
+                    "mister_game_folder": "Lunar",
+                    "retroarch_game_file_stem": "Lunar_fr_cd1",
+                }
+            ]
+        },
     }
 
 

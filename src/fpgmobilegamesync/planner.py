@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .compare import compare_manifests
+from .save_paths import is_convertible_save, native_save_content_path
 
 
 class PlanError(Exception):
@@ -17,6 +18,8 @@ def build_plan(
     mode: str,
     source_name: str = "source",
     target_name: str = "target",
+    config: dict[str, Any] | None = None,
+    target_device: str | None = None,
 ) -> dict[str, Any]:
     if mode not in {"upload", "download"}:
         raise PlanError(f"unsupported plan mode: {mode}")
@@ -28,7 +31,14 @@ def build_plan(
         target_name=target_name,
     )
     actions = [
-        _plan_action(action, mode=mode, source_name=source_name, target_name=target_name)
+        _plan_action(
+            action,
+            mode=mode,
+            source_name=source_name,
+            target_name=target_name,
+            config=config,
+            target_device=target_device,
+        )
         for action in comparison["actions"]
     ]
 
@@ -48,10 +58,20 @@ def _plan_action(
     mode: str,
     source_name: str,
     target_name: str,
+    config: dict[str, Any] | None,
+    target_device: str | None,
 ) -> dict[str, Any]:
     status = action["status"]
 
     if status == "unchanged":
+        native_rename = _native_path_rename_action(
+            action,
+            mode=mode,
+            config=config,
+            target_device=target_device,
+        )
+        if native_rename is not None:
+            return native_rename
         return {
             "operation": "noop",
             "reason": "unchanged",
@@ -59,13 +79,25 @@ def _plan_action(
             "target": action["target"],
         }
     if status == "modified":
-        return {
+        planned_action = {
             "operation": _copy_operation(mode),
             "reason": "modified",
             "source": action["source"],
             "target": action["target"],
             "backup_target_before_apply": True,
         }
+        native_paths = _native_path_mismatch(
+            action,
+            mode=mode,
+            config=config,
+            target_device=target_device,
+        )
+        if native_paths is not None:
+            planned_action["reason"] = "modified_native_path_mismatch"
+            planned_action["from_content_path"] = native_paths["current"]
+            planned_action["to_content_path"] = native_paths["expected"]
+            planned_action["rename_target_before_copy"] = True
+        return planned_action
     if status == "modified_renamed":
         return {
             "operation": _copy_operation(mode),
@@ -131,6 +163,66 @@ def _rename_operation(mode: str) -> str:
 
 def _trash_operation(mode: str) -> str:
     return "trash_remote" if mode == "upload" else "trash_local"
+
+
+def _native_path_rename_action(
+    action: dict[str, Any],
+    mode: str,
+    config: dict[str, Any] | None,
+    target_device: str | None,
+) -> dict[str, Any] | None:
+    native_paths = _native_path_mismatch(
+        action,
+        mode=mode,
+        config=config,
+        target_device=target_device,
+    )
+    if native_paths is None:
+        return None
+    return {
+        "operation": _rename_operation(mode),
+        "reason": "native_path_mismatch",
+        "source": action["source"],
+        "target": action["target"],
+        "from_content_path": native_paths["current"],
+        "to_content_path": native_paths["expected"],
+        "copy_delete_required": False,
+    }
+
+
+def _native_path_mismatch(
+    action: dict[str, Any],
+    mode: str,
+    config: dict[str, Any] | None,
+    target_device: str | None,
+) -> dict[str, str] | None:
+    if mode != "download" or config is None or target_device is None:
+        return None
+    if "source" not in action or "target" not in action:
+        return None
+
+    source = action["source"]
+    target = action["target"]
+    if not is_convertible_save(
+        config=config,
+        system=source["system"],
+        content_type=source["type"],
+    ):
+        return None
+
+    expected = native_save_content_path(
+        config=config,
+        system=source["system"],
+        device=target_device,
+        canonical_content_path=source["content_path"],
+    )
+    current = target.get("native_content_path", target["content_path"])
+    if current == expected:
+        return None
+    return {
+        "current": current,
+        "expected": expected,
+    }
 
 
 def _summary(actions: list[dict[str, Any]]) -> dict[str, int]:
