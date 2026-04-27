@@ -147,6 +147,24 @@ class PlannerTests(unittest.TestCase):
         action = plan["actions"][0]
         self.assertEqual(action["reason"], "unchanged_native_path")
 
+    def test_download_plan_does_not_rename_convertible_save_by_hash_only(self) -> None:
+        source = _manifest([_item("psx", "saves", "Valkyrie.sav", "empty-card", 131072)])
+        target = _manifest([_item("psx", "saves", "Xenogears.sav", "empty-card", 131072)])
+
+        plan = build_plan(
+            source,
+            target,
+            mode="download",
+            source_name="s3",
+            target_name="mister",
+            config=_psx_mapping_config(),
+            target_device="mister",
+        )
+
+        self.assertEqual(plan["summary"]["download"], 1)
+        self.assertEqual(plan["actions"][0]["operation"], "download")
+        self.assertEqual(plan["actions"][0]["reason"], "added")
+
     def test_ambiguous_rename_becomes_conflict(self) -> None:
         source = _manifest([_item("gba", "saves", "Save.sav", "same", 4)])
         target = _manifest(

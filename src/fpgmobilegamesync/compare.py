@@ -92,16 +92,16 @@ def compare_manifests(
         if len(same_hash_targets) == 1:
             target_item = same_hash_targets[0]
             matched_target_paths.add(_path_key(target_item))
-            actions.append(
-                _action(
-                    _rename_status(
-                        old_path=target_item["content_path"],
-                        new_path=source_item["content_path"],
-                    ),
-                    source_item,
-                    target_item,
-                )
+            rename_action = _action(
+                _rename_status(
+                    old_path=target_item["content_path"],
+                    new_path=source_item["content_path"],
+                ),
+                source_item,
+                target_item,
             )
+            rename_action["match_reason"] = "same_hash"
+            actions.append(rename_action)
             continue
         if len(same_hash_targets) > 1:
             actions.append(

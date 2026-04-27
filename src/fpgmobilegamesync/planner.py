@@ -135,6 +135,12 @@ def _plan_action(
                 "source": action["source"],
                 "target": action["target"],
             }
+        if _is_hash_only_convertible_save_match(action, config=config):
+            return {
+                "operation": _copy_operation(mode),
+                "reason": "added",
+                "source": action["source"],
+            }
         return {
             "operation": _rename_operation(mode),
             "reason": status,
@@ -278,6 +284,24 @@ def _native_target_path_matches_source(
     )
     current = target.get("native_content_path", target["content_path"])
     return current == expected
+
+
+def _is_hash_only_convertible_save_match(
+    action: dict[str, Any],
+    config: dict[str, Any] | None,
+) -> bool:
+    if action.get("match_reason") != "same_hash" or config is None:
+        return False
+    source = action.get("source")
+    if source is None:
+        return False
+    if source["system"] != "psx":
+        return False
+    return is_convertible_save(
+        config=config,
+        system=source["system"],
+        content_type=source["type"],
+    )
 
 
 def _summary(actions: list[dict[str, Any]]) -> dict[str, int]:
