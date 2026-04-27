@@ -292,6 +292,48 @@ class SyncEngineTests(unittest.TestCase):
             self.assertTrue(summary["skip_deletes"])
             self.assertEqual(summary["upload_skipped_summary"]["trash_remote"], 1)
 
+    def test_s3_sync_filters_store_manifest_to_selected_system(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mister_root = root / "mister"
+            thor_root = root / "thor"
+            (mister_root / "saves/SNES").mkdir(parents=True)
+            (thor_root / "RetroArch/saves/Mesen-S").mkdir(parents=True)
+            (mister_root / "saves/SNES/Chrono Trigger.sav").write_bytes(b"snes-save")
+            client = FakeS3Client(
+                {"fp/systems/gba/saves/Advance Wars.sav": b"gba-save"}
+            )
+            store = S3ObjectStore(client=client, bucket="bucket", prefix="fp")
+            client.objects["fp/manifests/s3.json"] = json.dumps(store.scan_live()).encode("utf-8")
+
+            result = run_s3_sync(
+                config=_config_with_snes(mister_root, thor_root),
+                direction="mister-to-thor",
+                systems=["snes"],
+                types=["saves"],
+                apply=True,
+                timestamp_utc="2026-04-27T09-30-00Z",
+                store=store,
+            )
+
+            self.assertEqual(result["store_summary_before_upload"]["item_count"], 0)
+            self.assertEqual(result["store_summary_after_upload"]["item_count"], 1)
+            self.assertEqual(result["upload_plan"]["summary"], {"upload": 1, "total": 1})
+            self.assertEqual(result["download_plan"]["summary"], {"download": 1, "total": 1})
+            self.assertEqual(
+                client.objects["fp/systems/gba/saves/Advance Wars.sav"],
+                b"gba-save",
+            )
+            self.assertEqual(
+                client.objects["fp/systems/snes/saves/Chrono Trigger.sav"],
+                b"snes-save",
+            )
+            self.assertEqual(
+                (thor_root / "RetroArch/saves/Mesen-S/Chrono Trigger.srm").read_bytes(),
+                b"snes-save",
+            )
+            self.assertFalse((thor_root / "RetroArch/saves/Mesen-S/Advance Wars.srm").exists())
+
     def test_apply_mister_to_thor_save_sync_through_s3_with_sftp_devices(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             report_dir = Path(tmp) / "reports" / "sftp-run"
@@ -544,6 +586,39 @@ def _config(mister_root: Path, thor_root: Path) -> dict:
             }
         },
     }
+
+
+def _config_with_snes(mister_root: Path, thor_root: Path) -> dict:
+    config = _config(mister_root, thor_root)
+    config["defaults"]["systems"] = ["gba", "snes"]
+    config["systems"]["snes"] = {
+        "paths": {
+            "mister": {
+                "saves": "saves/SNES",
+            },
+            "thor": {
+                "saves": "RetroArch/saves/Mesen-S",
+            },
+        },
+        "file_extensions": {
+            "saves": {
+                "mister": [".sav"],
+                "thor": [".srm"],
+            }
+        },
+        "save_conversion": {
+            "strategy": "raw_same_content",
+            "mister_to_thor": {
+                "rename_extension_to": ".srm",
+                "validate_sizes": [4, 9],
+            },
+            "thor_to_mister": {
+                "rename_extension_to": ".sav",
+                "validate_sizes": [4, 9],
+            },
+        },
+    }
+    return config
 
 
 class FakeS3Client:

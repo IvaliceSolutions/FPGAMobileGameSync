@@ -58,7 +58,11 @@ def run_local_sync(
         types=types,
     )
     store = LocalObjectStore(store_root)
-    store_manifest_before = store.scan()
+    store_manifest_before = _filter_manifest(
+        store.scan(),
+        systems=systems,
+        types=types,
+    )
     upload_plan = build_plan(
         source=source_manifest,
         target=store_manifest_before,
@@ -80,7 +84,11 @@ def run_local_sync(
             source_device=source_device,
         )
 
-    store_manifest_after_upload = store.scan()
+    store_manifest_after_upload = _filter_manifest(
+        store.scan(),
+        systems=systems,
+        types=types,
+    )
     target_manifest = scan(
         config=runtime_config,
         device=target_device,
@@ -218,7 +226,11 @@ def run_s3_sync(
                 scan_backend=source_backend,
                 sftp_client=clients.get(source_device),
             )
-            store_manifest_before = s3_store.scan()
+            store_manifest_before = _filter_manifest(
+                s3_store.scan(),
+                systems=systems,
+                types=types,
+            )
             upload_plan = build_plan(
                 source=source_manifest,
                 target=store_manifest_before,
@@ -251,7 +263,11 @@ def run_s3_sync(
                         store=s3_store,
                     )
 
-            store_manifest_after_upload = s3_store.scan()
+            store_manifest_after_upload = _filter_manifest(
+                s3_store.scan(),
+                systems=systems,
+                types=types,
+            )
             target_manifest = _scan_device(
                 config=runtime_config,
                 device=target_device,
@@ -485,6 +501,36 @@ def _scan_device(
             client=sftp_client,
         )
     raise SyncError(f"unsupported scan backend: {scan_backend}")
+
+
+def _filter_manifest(
+    manifest: dict[str, Any],
+    systems: list[str] | None,
+    types: list[str] | None,
+) -> dict[str, Any]:
+    if systems is None and types is None:
+        return manifest
+
+    system_filter = set(systems or [])
+    type_filter = set(types or [])
+    filtered = copy.deepcopy(manifest)
+    items = [
+        item
+        for item in filtered.get("items", [])
+        if (not system_filter or item.get("system") in system_filter)
+        and (not type_filter or item.get("type") in type_filter)
+    ]
+    filtered["items"] = items
+    summary = dict(filtered.get("summary", {}))
+    summary["item_count"] = len(items)
+    summary["total_size"] = sum(int(item.get("size", 0)) for item in items)
+    summary.setdefault("skipped_count", len(filtered.get("skipped", [])))
+    filtered["summary"] = summary
+    if systems is not None:
+        filtered["systems"] = list(systems)
+    if types is not None:
+        filtered["types"] = list(types)
+    return filtered
 
 
 def _sync_devices(config: dict[str, Any], direction: str) -> tuple[str, str]:
