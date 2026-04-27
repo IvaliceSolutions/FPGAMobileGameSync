@@ -28,7 +28,11 @@ def canonical_save_content_path(
     conversion = config["systems"][system].get("save_conversion", {})
     path = Path(native_content_path)
     canonical_stem = _canonical_save_stem(config, system, device, path.stem)
-    suffix = _canonical_save_suffix(conversion)
+    suffix = (
+        path.suffix
+        if _preserves_raw_same_content_suffix(conversion, path.suffix)
+        else _canonical_save_suffix(conversion)
+    )
     return _with_stem_and_suffix(path, canonical_stem, suffix)
 
 
@@ -41,8 +45,21 @@ def native_save_content_path(
     conversion = config["systems"][system].get("save_conversion", {})
     path = Path(canonical_content_path)
     native_stem = _native_save_stem(config, system, device, path.stem)
-    suffix = _native_save_suffix(conversion, device) or path.suffix
+    suffix = (
+        path.suffix
+        if _preserves_raw_same_content_suffix(conversion, path.suffix)
+        else _native_save_suffix(conversion, device) or path.suffix
+    )
     return _with_stem_and_suffix(path, native_stem, suffix)
+
+
+def _preserves_raw_same_content_suffix(conversion: dict[str, Any], suffix: str) -> bool:
+    if conversion.get("strategy") != "raw_same_content":
+        return False
+    return suffix.casefold() in {
+        extension.casefold()
+        for extension in _as_list(conversion.get("preserve_extensions"))
+    }
 
 
 def _canonical_save_suffix(conversion: dict[str, Any]) -> str:
@@ -155,3 +172,11 @@ def _with_stem_and_suffix(path: Path, stem: str, suffix: str) -> str:
     if str(parent) == ".":
         return filename
     return str(parent / filename)
+
+
+def _as_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]

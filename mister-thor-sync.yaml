@@ -289,8 +289,10 @@ systems:
         mister:
           - .sav
           - .srm
+          - .rtc
         thor:
           - .srm
+          - .rtc
       bios:
         - .rom
         - .bin
@@ -300,10 +302,14 @@ systems:
         - .jpeg
     save_conversion:
       strategy: raw_same_content
+      preserve_extensions:
+        - .rtc
       mister_to_thor:
         rename_extension_from:
           - .sav
           - .srm
+        preserve_extensions:
+          - .rtc
         rename_extension_to: .srm
         validate_sizes:
           - 512
@@ -314,6 +320,8 @@ systems:
           - 131072
       thor_to_mister:
         rename_extension_from: .srm
+        preserve_extensions:
+          - .rtc
         rename_extension_to: .sav
         validate_sizes:
           - 512

@@ -334,6 +334,36 @@ class SyncEngineTests(unittest.TestCase):
             )
             self.assertFalse((thor_root / "RetroArch/saves/Mesen-S/Advance Wars.srm").exists())
 
+    def test_s3_sync_preserves_snes_rtc_sidecar_extension(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mister_root = root / "mister"
+            thor_root = root / "thor"
+            (mister_root / "saves/SNES").mkdir(parents=True)
+            (thor_root / "RetroArch/saves/Mesen-S").mkdir(parents=True)
+            (mister_root / "saves/SNES/Tengai Makyou Zero.rtc").write_bytes(b"clock")
+            store = S3ObjectStore(client=FakeS3Client({}), bucket="bucket")
+
+            result = run_s3_sync(
+                config=_config_with_snes(mister_root, thor_root),
+                direction="mister-to-thor",
+                systems=["snes"],
+                types=["saves"],
+                apply=True,
+                timestamp_utc="2026-04-27T10-30-00Z",
+                store=store,
+            )
+
+            self.assertEqual(
+                result["upload_plan"]["actions"][0]["source"]["sync_key"],
+                "systems/snes/saves/Tengai Makyou Zero.rtc",
+            )
+            self.assertEqual(
+                (thor_root / "RetroArch/saves/Mesen-S/Tengai Makyou Zero.rtc").read_bytes(),
+                b"clock",
+            )
+            self.assertFalse((thor_root / "RetroArch/saves/Mesen-S/Tengai Makyou Zero.srm").exists())
+
     def test_apply_mister_to_thor_save_sync_through_s3_with_sftp_devices(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             report_dir = Path(tmp) / "reports" / "sftp-run"
@@ -602,19 +632,24 @@ def _config_with_snes(mister_root: Path, thor_root: Path) -> dict:
         },
         "file_extensions": {
             "saves": {
-                "mister": [".sav"],
-                "thor": [".srm"],
+                "mister": [".sav", ".rtc"],
+                "thor": [".srm", ".rtc"],
             }
         },
         "save_conversion": {
             "strategy": "raw_same_content",
+            "preserve_extensions": [".rtc"],
             "mister_to_thor": {
+                "rename_extension_from": [".sav"],
                 "rename_extension_to": ".srm",
                 "validate_sizes": [4, 9],
+                "preserve_extensions": [".rtc"],
             },
             "thor_to_mister": {
+                "rename_extension_from": [".srm"],
                 "rename_extension_to": ".sav",
                 "validate_sizes": [4, 9],
+                "preserve_extensions": [".rtc"],
             },
         },
     }

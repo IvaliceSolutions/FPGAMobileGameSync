@@ -338,10 +338,12 @@
         "saves": {
           "mister": [
             ".sav",
-            ".srm"
+            ".srm",
+            ".rtc"
           ],
           "thor": [
-            ".srm"
+            ".srm",
+            ".rtc"
           ]
         },
         "bios": [
@@ -356,10 +358,16 @@
       },
       "save_conversion": {
         "strategy": "raw_same_content",
+        "preserve_extensions": [
+          ".rtc"
+        ],
         "mister_to_thor": {
           "rename_extension_from": [
             ".sav",
             ".srm"
+          ],
+          "preserve_extensions": [
+            ".rtc"
           ],
           "rename_extension_to": ".srm",
           "validate_sizes": [
@@ -373,6 +381,9 @@
         },
         "thor_to_mister": {
           "rename_extension_from": ".srm",
+          "preserve_extensions": [
+            ".rtc"
+          ],
           "rename_extension_to": ".sav",
           "validate_sizes": [
             512,

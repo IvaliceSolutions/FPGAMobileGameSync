@@ -216,7 +216,14 @@ def _converted_psx_result(
 
 def _validate_raw_same_content(source_path: Path, rules: dict[str, Any]) -> None:
     allowed_inputs = _as_list(rules.get("rename_extension_from"))
+    preserve_extensions = {
+        extension.casefold()
+        for extension in _as_list(rules.get("preserve_extensions"))
+    }
+    allowed_inputs.extend(preserve_extensions)
     _validate_extension(source_path, allowed_inputs)
+    if source_path.suffix.casefold() in preserve_extensions:
+        return
     sizes = [int(size) for size in rules.get("validate_sizes", [])]
     if sizes and source_path.stat().st_size not in sizes:
         raise ConversionError(

@@ -64,6 +64,19 @@ class ConverterTests(unittest.TestCase):
             self.assertEqual(output.name, "Chrono Trigger.srm")
             self.assertEqual(result["size"], 8192)
 
+    def test_snes_rtc_sidecar_copies_without_renaming_or_size_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "Tengai Makyou Zero.rtc"
+            output = root / "out" / "Tengai Makyou Zero.rtc"
+            source.write_bytes(b"rtc-sidecar")
+
+            result = convert_save_file(self.config, "snes", "mister-to-thor", source, output)
+
+            self.assertEqual(output.name, "Tengai Makyou Zero.rtc")
+            self.assertEqual(result["size"], len(b"rtc-sidecar"))
+            self.assertEqual(output.read_bytes(), b"rtc-sidecar")
+
     def test_psx_save_uses_retroarch_game_file_stem_for_thor_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

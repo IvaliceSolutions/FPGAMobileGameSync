@@ -25,6 +25,22 @@ class SavePathTests(unittest.TestCase):
             "Golden Sun.sav",
         )
 
+    def test_raw_sidecar_extensions_are_preserved(self) -> None:
+        config = _config()
+
+        self.assertEqual(
+            canonical_save_content_path(config, "gba", "thor", "Pokemon.rtc"),
+            "Pokemon.rtc",
+        )
+        self.assertEqual(
+            native_save_content_path(config, "gba", "thor", "Pokemon.rtc"),
+            "Pokemon.rtc",
+        )
+        self.assertEqual(
+            native_save_content_path(config, "gba", "mister", "Pokemon.rtc"),
+            "Pokemon.rtc",
+        )
+
     def test_psx_mapping_links_mister_folder_to_retroarch_stem(self) -> None:
         config = _config()
         config["systems"]["psx"] = {
@@ -60,6 +76,7 @@ def _config() -> dict:
             "gba": {
                 "save_conversion": {
                     "strategy": "raw_same_content",
+                    "preserve_extensions": [".rtc"],
                     "mister_to_thor": {"rename_extension_to": ".srm"},
                     "thor_to_mister": {"rename_extension_to": ".sav"},
                 }
