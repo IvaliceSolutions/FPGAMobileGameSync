@@ -23,7 +23,7 @@ class SyncEngineTests(unittest.TestCase):
             store_root = root / "store"
             report_dir = root / "reports" / "run-1"
             (mister_root / "saves/GBA").mkdir(parents=True)
-            (thor_root / "RetroArch/saves/GBA").mkdir(parents=True)
+            (thor_root / "RetroArch/saves/mGBA").mkdir(parents=True)
             (mister_root / "saves/GBA/Golden Sun.sav").write_bytes(b"save-data")
 
             result = run_local_sync(
@@ -45,7 +45,7 @@ class SyncEngineTests(unittest.TestCase):
                 b"save-data",
             )
             self.assertEqual(
-                (thor_root / "RetroArch/saves/GBA/Golden Sun.srm").read_bytes(),
+                (thor_root / "RetroArch/saves/mGBA/Golden Sun.srm").read_bytes(),
                 b"save-data",
             )
             self.assertTrue((report_dir / "source-manifest.json").exists())
@@ -66,7 +66,7 @@ class SyncEngineTests(unittest.TestCase):
             thor_root = root / "thor"
             store_root = root / "store"
             (mister_root / "saves/GBA").mkdir(parents=True)
-            (thor_root / "RetroArch/saves/GBA").mkdir(parents=True)
+            (thor_root / "RetroArch/saves/mGBA").mkdir(parents=True)
             (mister_root / "saves/GBA/Advance Wars.sav").write_bytes(b"save")
             config_path = root / "config.json"
             config_path.write_text(
@@ -116,7 +116,7 @@ class SyncEngineTests(unittest.TestCase):
             thor_root = root / "thor"
             store_root = root / "store"
             (mister_root / "saves/GBA").mkdir(parents=True)
-            (thor_root / "RetroArch/saves/GBA").mkdir(parents=True)
+            (thor_root / "RetroArch/saves/mGBA").mkdir(parents=True)
             (mister_root / "saves/GBA/Advance Wars.sav").write_bytes(b"save")
             config = _config(mister_root, thor_root)
             config["sync_profiles"] = {
@@ -163,7 +163,7 @@ class SyncEngineTests(unittest.TestCase):
             thor_root = root / "thor"
             store_root = root / "store"
             (mister_root / "saves/GBA").mkdir(parents=True)
-            (thor_root / "RetroArch/saves/GBA").mkdir(parents=True)
+            (thor_root / "RetroArch/saves/mGBA").mkdir(parents=True)
             (mister_root / "saves/GBA/Advance Wars.sav").write_bytes(b"save")
             config = _config(mister_root, thor_root)
             config["sync_profiles"] = {
@@ -208,7 +208,7 @@ class SyncEngineTests(unittest.TestCase):
             thor_root = root / "thor"
             report_dir = root / "reports" / "s3-run"
             (mister_root / "saves/GBA").mkdir(parents=True)
-            (thor_root / "RetroArch/saves/GBA").mkdir(parents=True)
+            (thor_root / "RetroArch/saves/mGBA").mkdir(parents=True)
             (mister_root / "saves/GBA/Golden Sun.sav").write_bytes(b"save-data")
             client = FakeS3Client({})
             store = S3ObjectStore(client=client, bucket="bucket", prefix="fp")
@@ -237,7 +237,7 @@ class SyncEngineTests(unittest.TestCase):
             self.assertIn("fp/manifests/s3.json", client.objects)
             self.assertNotIn("fp/locks/sync.json", client.objects)
             self.assertEqual(
-                (thor_root / "RetroArch/saves/GBA/Golden Sun.srm").read_bytes(),
+                (thor_root / "RetroArch/saves/mGBA/Golden Sun.srm").read_bytes(),
                 b"save-data",
             )
             summary = json.loads((report_dir / "summary.json").read_text(encoding="utf-8"))
@@ -282,7 +282,7 @@ class SyncEngineTests(unittest.TestCase):
                 b"save-data",
             )
             self.assertEqual(
-                thor_client.files["/storage/emulated/0/RetroArch/saves/GBA/Golden Sun.srm"],
+                thor_client.files["/storage/emulated/0/RetroArch/saves/mGBA/Golden Sun.srm"],
                 b"save-data",
             )
             summary = json.loads((report_dir / "summary.json").read_text(encoding="utf-8"))
@@ -293,7 +293,7 @@ class SyncEngineTests(unittest.TestCase):
             root = Path(tmp)
             thor_root = root / "thor"
             report_dir = root / "reports" / "mixed-source-sftp"
-            (thor_root / "RetroArch/saves/GBA").mkdir(parents=True)
+            (thor_root / "RetroArch/saves/mGBA").mkdir(parents=True)
             config = _remote_config()
             config["devices"]["thor"]["local"]["root"] = str(thor_root)
             config["devices"]["thor"]["local"]["trash"] = str(thor_root / "RetroArch/.sync_trash")
@@ -321,7 +321,7 @@ class SyncEngineTests(unittest.TestCase):
             self.assertEqual(result["source_scan_backend"], "sftp")
             self.assertEqual(result["target_scan_backend"], "local")
             self.assertEqual(
-                (thor_root / "RetroArch/saves/GBA/Golden Sun.srm").read_bytes(),
+                (thor_root / "RetroArch/saves/mGBA/Golden Sun.srm").read_bytes(),
                 b"save-data",
             )
             summary = json.loads((report_dir / "summary.json").read_text(encoding="utf-8"))
@@ -333,8 +333,8 @@ class SyncEngineTests(unittest.TestCase):
             root = Path(tmp)
             thor_root = root / "thor"
             report_dir = root / "reports" / "mixed-target-sftp"
-            (thor_root / "RetroArch/saves/GBA").mkdir(parents=True)
-            (thor_root / "RetroArch/saves/GBA/Golden Sun.srm").write_bytes(b"save-data")
+            (thor_root / "RetroArch/saves/mGBA").mkdir(parents=True)
+            (thor_root / "RetroArch/saves/mGBA/Golden Sun.srm").write_bytes(b"save-data")
             config = _remote_config()
             config["devices"]["thor"]["local"]["root"] = str(thor_root)
             config["devices"]["thor"]["local"]["trash"] = str(thor_root / "RetroArch/.sync_trash")
@@ -373,9 +373,9 @@ class SyncEngineTests(unittest.TestCase):
             )
             thor_client = FakeRemoteClient(
                 {
-                    "/storage/emulated/0/RetroArch/saves/GBA/Changed.srm": b"old-save!",
-                    "/storage/emulated/0/RetroArch/saves/GBA/OldName.srm": b"same-save",
-                    "/storage/emulated/0/RetroArch/saves/GBA/Deleted.srm": b"deleted",
+                    "/storage/emulated/0/RetroArch/saves/mGBA/Changed.srm": b"old-save!",
+                    "/storage/emulated/0/RetroArch/saves/mGBA/OldName.srm": b"same-save",
+                    "/storage/emulated/0/RetroArch/saves/mGBA/Deleted.srm": b"deleted",
                 }
             )
             store = S3ObjectStore(client=FakeS3Client({}), bucket="bucket")
@@ -400,7 +400,7 @@ class SyncEngineTests(unittest.TestCase):
             self.assertEqual(result["download_plan"]["summary"]["rename_local"], 1)
             self.assertEqual(result["download_plan"]["summary"]["trash_local"], 1)
             self.assertEqual(
-                thor_client.files["/storage/emulated/0/RetroArch/saves/GBA/Changed.srm"],
+                thor_client.files["/storage/emulated/0/RetroArch/saves/mGBA/Changed.srm"],
                 b"new-save!",
             )
             self.assertEqual(
@@ -411,15 +411,15 @@ class SyncEngineTests(unittest.TestCase):
                 b"old-save!",
             )
             self.assertNotIn(
-                "/storage/emulated/0/RetroArch/saves/GBA/OldName.srm",
+                "/storage/emulated/0/RetroArch/saves/mGBA/OldName.srm",
                 thor_client.files,
             )
             self.assertEqual(
-                thor_client.files["/storage/emulated/0/RetroArch/saves/GBA/Renamed.srm"],
+                thor_client.files["/storage/emulated/0/RetroArch/saves/mGBA/Renamed.srm"],
                 b"same-save",
             )
             self.assertNotIn(
-                "/storage/emulated/0/RetroArch/saves/GBA/Deleted.srm",
+                "/storage/emulated/0/RetroArch/saves/mGBA/Deleted.srm",
                 thor_client.files,
             )
             self.assertEqual(
@@ -474,7 +474,7 @@ def _config(mister_root: Path, thor_root: Path) -> dict:
                         "saves": "saves/GBA",
                     },
                     "thor": {
-                        "saves": "RetroArch/saves/GBA",
+                        "saves": "RetroArch/saves/mGBA",
                     },
                 },
                 "file_extensions": {

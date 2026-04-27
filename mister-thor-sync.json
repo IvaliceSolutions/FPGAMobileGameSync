@@ -231,7 +231,7 @@
         },
         "thor": {
           "games": "RetroArch/games/GBA",
-          "saves": "RetroArch/saves/GBA",
+          "saves": "RetroArch/saves/mGBA",
           "bios": [
             "RetroArch/system/gba_bios.bin"
           ],
@@ -320,7 +320,7 @@
         },
         "thor": {
           "games": "RetroArch/games/SNES",
-          "saves": "RetroArch/saves/SNES",
+          "saves": "RetroArch/saves/Mesen-S",
           "bios": [
             "RetroArch/system/BS-X.bin"
           ],
@@ -415,7 +415,7 @@
         },
         "thor": {
           "games": "RetroArch/games/PSX",
-          "saves": "RetroArch/saves/PSX",
+          "saves": "RetroArch/saves/SwanStation",
           "bios": [
             "RetroArch/system/scph5500.bin",
             "RetroArch/system/scph5501.bin",

@@ -38,7 +38,7 @@ class RemoteScannerTests(unittest.TestCase):
     def test_scan_remote_normalizes_thor_save_name(self) -> None:
         client = FakeRemoteClient(
             {
-                "/storage/emulated/0/RetroArch/saves/GBA/Golden Sun.srm": b"save",
+                "/storage/emulated/0/RetroArch/saves/mGBA/Golden Sun.srm": b"save",
             }
         )
         config = _config("/storage/emulated/0")
@@ -50,7 +50,7 @@ class RemoteScannerTests(unittest.TestCase):
         }
         config["systems"]["gba"]["paths"]["thor"] = {
             "games": "RetroArch/games/GBA",
-            "saves": "RetroArch/saves/GBA",
+            "saves": "RetroArch/saves/mGBA",
             "bios": [],
             "thumbnails": None,
         }

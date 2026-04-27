@@ -341,7 +341,7 @@ def _config(root: Path) -> dict:
                         "saves": "saves/GBA",
                     },
                     "thor": {
-                        "saves": "RetroArch/saves/GBA",
+                        "saves": "RetroArch/saves/mGBA",
                     },
                 },
                 "file_extensions": {

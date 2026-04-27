@@ -551,7 +551,7 @@ Apply an S3 -> local target download plan:
 PYTHONPATH=src python3 -m fpgmobilegamesync.cli apply \
   --plan download-plan.json \
   --backend s3 \
-  --target-root /Volumes/thor-storage/RetroArch/saves/GBA \
+  --target-root /Volumes/thor-storage/RetroArch/saves/mGBA \
   --trash-root /Volumes/thor-storage/RetroArch/.sync_trash \
   --pretty
 ```

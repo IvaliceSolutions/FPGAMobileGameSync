@@ -36,7 +36,7 @@ class ScannerTests(unittest.TestCase):
     def test_scan_normalizes_thor_raw_save_extension_to_canonical_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            save_dir = root / "RetroArch" / "saves" / "GBA"
+            save_dir = root / "RetroArch" / "saves" / "mGBA"
             save_dir.mkdir(parents=True)
             (save_dir / "Golden Sun.srm").write_bytes(b"save")
 
@@ -44,7 +44,7 @@ class ScannerTests(unittest.TestCase):
             config["devices"]["thor"] = {"local": {"root": str(root)}}
             config["systems"]["gba"]["paths"]["thor"] = {
                 "games": "RetroArch/games/GBA",
-                "saves": "RetroArch/saves/GBA",
+                "saves": "RetroArch/saves/mGBA",
                 "bios": [],
                 "thumbnails": None,
             }
