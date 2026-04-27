@@ -56,6 +56,7 @@ class SftpDeviceClient:
             raise SftpError(f"missing SFTP username for device: {device}")
         password = _value_or_env(remote, "password", "password_env")
         key_filename = _value_or_env(remote, "private_key", "private_key_env")
+        auth_options = _auth_options(remote, password, key_filename)
         port = remote.get("port", 22)
         if not isinstance(port, int):
             raise SftpError(f"invalid SFTP port for device: {device}")
@@ -70,8 +71,7 @@ class SftpDeviceClient:
                 username=username,
                 password=password or None,
                 key_filename=key_filename or None,
-                look_for_keys=True,
-                allow_agent=True,
+                **auth_options,
             )
             sftp_client = ssh_client.open_sftp()
         except Exception as exc:
@@ -181,3 +181,22 @@ def _value_or_env(remote: dict[str, Any], value_key: str, env_key: str) -> str |
     if isinstance(env_name, str) and env_name:
         return os.environ.get(env_name)
     return None
+
+
+def _auth_options(
+    remote: dict[str, Any],
+    password: str | None,
+    key_filename: str | None,
+) -> dict[str, bool]:
+    has_explicit_auth = bool(password or key_filename)
+    return {
+        "look_for_keys": _remote_bool(remote, "look_for_keys", not has_explicit_auth),
+        "allow_agent": _remote_bool(remote, "allow_agent", not has_explicit_auth),
+    }
+
+
+def _remote_bool(remote: dict[str, Any], key: str, default: bool) -> bool:
+    value = remote.get(key)
+    if isinstance(value, bool):
+        return value
+    return default
