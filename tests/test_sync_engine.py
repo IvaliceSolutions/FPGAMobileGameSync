@@ -245,6 +245,53 @@ class SyncEngineTests(unittest.TestCase):
             self.assertEqual(summary["store"]["prefix"], "fp")
             self.assertEqual(summary["lock_release"]["status"], "released")
 
+    def test_s3_sync_skip_deletes_keeps_store_and_target_extras(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            thor_root = root / "thor"
+            mister_root = root / "mister"
+            report_dir = root / "reports" / "bootstrap"
+            (thor_root / "RetroArch/saves/mGBA").mkdir(parents=True)
+            (mister_root / "saves/GBA").mkdir(parents=True)
+            (thor_root / "RetroArch/saves/mGBA/Thor Only.srm").write_bytes(b"thor")
+            (mister_root / "saves/GBA/Mister Only.sav").write_bytes(b"save")
+            client = FakeS3Client({"fp/systems/gba/saves/Mister Only.sav": b"save"})
+            store = S3ObjectStore(client=client, bucket="bucket", prefix="fp")
+            client.objects["fp/manifests/s3.json"] = json.dumps(store.scan_live()).encode("utf-8")
+
+            result = run_s3_sync(
+                config=_config(mister_root, thor_root),
+                direction="thor-to-mister",
+                systems=["gba"],
+                types=["saves"],
+                apply=True,
+                timestamp_utc="2026-04-27T08-30-00Z",
+                report_dir=report_dir,
+                store=store,
+                skip_deletes=True,
+            )
+
+            self.assertFalse(result["dry_run"])
+            self.assertTrue(result["skip_deletes"])
+            self.assertEqual(result["upload_plan"]["summary"]["upload"], 1)
+            self.assertNotIn("trash_remote", result["upload_plan"]["summary"])
+            self.assertEqual(result["upload_plan"]["skipped_summary"]["trash_remote"], 1)
+            self.assertEqual(result["download_plan"]["summary"]["download"], 1)
+            self.assertEqual(result["download_plan"]["summary"]["noop"], 1)
+            self.assertEqual(
+                client.objects["fp/systems/gba/saves/Mister Only.sav"],
+                b"save",
+            )
+            self.assertEqual(
+                client.objects["fp/systems/gba/saves/Thor Only.sav"],
+                b"thor",
+            )
+            self.assertEqual((mister_root / "saves/GBA/Mister Only.sav").read_bytes(), b"save")
+            self.assertEqual((mister_root / "saves/GBA/Thor Only.sav").read_bytes(), b"thor")
+            summary = json.loads((report_dir / "summary.json").read_text(encoding="utf-8"))
+            self.assertTrue(summary["skip_deletes"])
+            self.assertEqual(summary["upload_skipped_summary"]["trash_remote"], 1)
+
     def test_apply_mister_to_thor_save_sync_through_s3_with_sftp_devices(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             report_dir = Path(tmp) / "reports" / "sftp-run"

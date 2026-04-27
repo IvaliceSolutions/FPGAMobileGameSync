@@ -658,6 +658,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip conflict actions instead of refusing the plan during apply.",
     )
     sync_parser.add_argument(
+        "--skip-deletes",
+        action="store_true",
+        help=(
+            "Skip planned logical deletes/trashes. Useful for first bootstrap "
+            "runs when both devices already have unique files."
+        ),
+    )
+    sync_parser.add_argument(
         "--no-lock",
         action="store_true",
         help="Disable the S3 sync lock during --apply. Intended only for recovery/debugging.",
@@ -1018,6 +1026,7 @@ def main(argv: list[str] | None = None) -> int:
             report_dir = _sync_option(args.report_dir, profile, "report_dir")
             timestamp_utc = _sync_option(args.timestamp_utc, profile, "timestamp_utc")
             allow_conflicts = bool(args.allow_conflicts or profile.get("allow_conflicts", False))
+            skip_deletes = bool(args.skip_deletes or profile.get("skip_deletes", False))
             no_lock = bool(args.no_lock or profile.get("no_lock", False))
             lock_ttl_seconds = int(
                 _sync_option(args.lock_ttl_seconds, profile, "lock_ttl_seconds", 1800)
@@ -1043,6 +1052,7 @@ def main(argv: list[str] | None = None) -> int:
                     apply=apply_changes,
                     timestamp_utc=timestamp_utc,
                     allow_conflicts=allow_conflicts,
+                    skip_deletes=skip_deletes,
                     report_dir=Path(report_dir) if report_dir else None,
                 )
             elif backend == "s3":
@@ -1063,6 +1073,7 @@ def main(argv: list[str] | None = None) -> int:
                     lock_owner=lock_owner,
                     source_scan_backend=source_backend,
                     target_scan_backend=target_backend,
+                    skip_deletes=skip_deletes,
                 )
             else:
                 raise SyncError(f"unsupported sync backend: {backend}")

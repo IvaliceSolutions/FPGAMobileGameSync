@@ -252,6 +252,32 @@ PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
   --pretty
 ```
 
+For the first bootstrap, when MiSTer and Thor both already contain unique files,
+add `--skip-deletes`. The plans still record ignored trash operations under
+`skipped_actions` and `skipped_summary`, but the run will not move local files
+or S3 objects to trash. A safe two-pass seed is:
+
+```sh
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
+  --profile third-mister-to-thor \
+  --system gba \
+  --type saves \
+  --skip-deletes \
+  --apply \
+  --pretty
+
+PYTHONPATH=src python3 -m fpgmobilegamesync.cli sync \
+  --profile third-thor-to-mister \
+  --system gba \
+  --type saves \
+  --skip-deletes \
+  --apply \
+  --pretty
+```
+
+After both sides and S3 contain the expected union, run normal dry-runs without
+`--skip-deletes` before allowing future deletions to flow into the logical trash.
+
 The default lock TTL is 30 minutes. Use `--lock-ttl-seconds` to change it, and
 reserve `--no-lock` for recovery/debugging when you have already verified that
 no other sync is running.

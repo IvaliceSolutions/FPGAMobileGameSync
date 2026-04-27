@@ -39,6 +39,7 @@ def run_local_sync(
     apply: bool = False,
     timestamp_utc: str | None = None,
     allow_conflicts: bool = False,
+    skip_deletes: bool = False,
     report_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Run source -> local object store -> target sync on local paths."""
@@ -65,6 +66,8 @@ def run_local_sync(
         source_name=source_device,
         target_name="s3",
     )
+    if skip_deletes:
+        upload_plan = _skip_delete_actions(upload_plan)
 
     upload_apply = None
     if apply:
@@ -91,6 +94,8 @@ def run_local_sync(
         source_name="s3",
         target_name=target_device,
     )
+    if skip_deletes:
+        download_plan = _skip_delete_actions(download_plan)
 
     download_apply = None
     if apply:
@@ -108,6 +113,7 @@ def run_local_sync(
         "dry_run": not apply,
         "source_device": source_device,
         "target_device": target_device,
+        "skip_deletes": skip_deletes,
         "store_root": str(store_root),
         "source_summary": source_manifest["summary"],
         "store_summary_before_upload": store_manifest_before["summary"],
@@ -156,6 +162,7 @@ def run_s3_sync(
     lock_owner: str | None = None,
     source_scan_backend: str | None = None,
     target_scan_backend: str | None = None,
+    skip_deletes: bool = False,
 ) -> dict[str, Any]:
     """Run source -> S3/Garage -> target sync on local or SFTP device roots."""
     if scan_backend not in {"local", "sftp"}:
@@ -219,6 +226,8 @@ def run_s3_sync(
                 source_name=source_device,
                 target_name="s3",
             )
+            if skip_deletes:
+                upload_plan = _skip_delete_actions(upload_plan)
 
             upload_apply = None
             if apply:
@@ -258,6 +267,8 @@ def run_s3_sync(
                 source_name="s3",
                 target_name=target_device,
             )
+            if skip_deletes:
+                download_plan = _skip_delete_actions(download_plan)
 
             download_apply = None
             if apply:
@@ -296,6 +307,7 @@ def run_s3_sync(
         "dry_run": not apply,
         "source_device": source_device,
         "target_device": target_device,
+        "skip_deletes": skip_deletes,
         "store": {
             "backend": "s3",
             "bucket": s3_store.bucket,
@@ -600,6 +612,37 @@ def _combined_apply_summary(applied_groups: list[dict[str, Any]]) -> dict[str, i
     return summary
 
 
+def _skip_delete_actions(plan: dict[str, Any]) -> dict[str, Any]:
+    filtered_plan = copy.deepcopy(plan)
+    skipped = [
+        action
+        for action in filtered_plan["actions"]
+        if action.get("operation") in {"trash_remote", "trash_local"}
+    ]
+    if not skipped:
+        return filtered_plan
+
+    filtered_plan["actions"] = [
+        action
+        for action in filtered_plan["actions"]
+        if action.get("operation") not in {"trash_remote", "trash_local"}
+    ]
+    filtered_plan["summary"] = _action_summary(filtered_plan["actions"])
+    filtered_plan["skipped_actions"] = skipped
+    filtered_plan["skipped_summary"] = _action_summary(skipped)
+    filtered_plan["skip_reason"] = "skip_deletes"
+    return filtered_plan
+
+
+def _action_summary(actions: list[dict[str, Any]]) -> dict[str, int]:
+    summary: dict[str, int] = {}
+    for action in actions:
+        operation = action["operation"]
+        summary[operation] = summary.get(operation, 0) + 1
+    summary["total"] = len(actions)
+    return summary
+
+
 def _lock_report(lock: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in lock.items() if key != "token"}
 
@@ -625,15 +668,18 @@ def _summary_report(result: dict[str, Any]) -> dict[str, Any]:
         "backend": result["backend"],
         "direction": result["direction"],
         "dry_run": result["dry_run"],
+        "skip_deletes": result.get("skip_deletes", False),
         "source_device": result["source_device"],
         "target_device": result["target_device"],
         "source_summary": result["source_summary"],
         "store_summary_before_upload": result["store_summary_before_upload"],
         "upload_plan_summary": result["upload_plan"]["summary"],
+        "upload_skipped_summary": result["upload_plan"].get("skipped_summary"),
         "upload_apply_summary": upload_apply.get("summary"),
         "store_summary_after_upload": result["store_summary_after_upload"],
         "target_summary": result["target_summary"],
         "download_plan_summary": result["download_plan"]["summary"],
+        "download_skipped_summary": result["download_plan"].get("skipped_summary"),
         "download_apply_summary": download_apply.get("summary"),
     }
     if "scan_backend" in result:
