@@ -59,6 +59,8 @@ def scan(
             items.extend(found)
             skipped.extend(missing)
 
+    items = deduplicate_scan_items(items, skipped)
+
     return {
         "device": device,
         "systems": selected_systems,
@@ -149,6 +151,43 @@ def _scan_system_type(
         )
 
     return items, skipped
+
+
+def deduplicate_scan_items(
+    items: list[ScanItem],
+    skipped: list[dict[str, str]],
+) -> list[ScanItem]:
+    selected: dict[str, ScanItem] = {}
+    for item in items:
+        current = selected.get(item.sync_key)
+        if current is None:
+            selected[item.sync_key] = item
+            continue
+        if _scan_item_sort_key(item) > _scan_item_sort_key(current):
+            skipped.append(_duplicate_skip(current, kept=item))
+            selected[item.sync_key] = item
+        else:
+            skipped.append(_duplicate_skip(item, kept=current))
+    return list(selected.values())
+
+
+def _scan_item_sort_key(item: ScanItem) -> tuple[int, str]:
+    return item.modified_ns, item.absolute_path
+
+
+def _duplicate_skip(item: ScanItem, kept: ScanItem) -> dict[str, str]:
+    return {
+        "device": item.device,
+        "system": item.system,
+        "type": item.type,
+        "path": item.absolute_path,
+        "relative_path": item.relative_path,
+        "content_path": item.content_path,
+        "sync_key": item.sync_key,
+        "kept_path": kept.absolute_path,
+        "kept_modified_ns": str(kept.modified_ns),
+        "reason": "duplicate_sync_key_not_selected",
+    }
 
 
 def _scan_file(

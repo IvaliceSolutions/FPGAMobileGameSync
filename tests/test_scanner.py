@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import os
 from pathlib import Path
 
 from fpgmobilegamesync.scanner import scan
@@ -65,6 +66,42 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(item["native_sha256"], item["canonical_sha256"])
             self.assertEqual(item["size"], item["canonical_size"])
             self.assertEqual(item["native_size"], item["canonical_size"])
+
+    def test_scan_keeps_newest_duplicate_canonical_save_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            save_dir = root / "RetroArch" / "saves" / "mGBA"
+            save_dir.mkdir(parents=True)
+            old_save = save_dir / "Game.sav"
+            new_save = save_dir / "Game.srm"
+            old_save.write_bytes(b"old")
+            new_save.write_bytes(b"new")
+            os.utime(old_save, ns=(1, 1))
+            os.utime(new_save, ns=(2, 2))
+
+            config = _config(root)
+            config["devices"]["thor"] = {"local": {"root": str(root)}}
+            config["systems"]["gba"]["paths"]["thor"] = {
+                "games": "RetroArch/games/GBA",
+                "saves": "RetroArch/saves/mGBA",
+                "bios": [],
+                "thumbnails": None,
+            }
+            config["systems"]["gba"]["file_extensions"]["saves"]["thor"] = [".sav", ".srm"]
+            config["systems"]["gba"]["save_conversion"] = {
+                "strategy": "raw_same_content",
+                "mister_to_thor": {"rename_extension_to": ".srm"},
+                "thor_to_mister": {"rename_extension_to": ".sav"},
+            }
+
+            manifest = scan(config=config, device="thor", systems=["gba"], types=["saves"])
+
+            self.assertEqual(manifest["summary"]["item_count"], 1)
+            self.assertEqual(manifest["summary"]["skipped_count"], 1)
+            self.assertEqual(manifest["items"][0]["native_content_path"], "Game.srm")
+            self.assertEqual(manifest["items"][0]["sync_key"], "systems/gba/saves/Game.sav")
+            self.assertEqual(manifest["skipped"][0]["reason"], "duplicate_sync_key_not_selected")
+            self.assertEqual(manifest["skipped"][0]["path"], str(old_save))
 
 
 def _config(root: Path) -> dict:

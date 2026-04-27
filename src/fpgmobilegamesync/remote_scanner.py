@@ -10,7 +10,7 @@ from typing import Any, Iterable
 
 from .psx_memory_card import PsxMemoryCardError, canonical_psx_memory_card_bytes_from_data
 from .save_paths import canonical_save_content_path, is_convertible_save
-from .scanner import ScanError, ScanItem
+from .scanner import ScanError, ScanItem, deduplicate_scan_items
 from .sftp_client import RemoteDirEntry, SftpDeviceClient, SftpError
 
 
@@ -48,6 +48,8 @@ def scan_remote(
     finally:
         if owns_client:
             remote_client.close()
+
+    items = deduplicate_scan_items(items, skipped)
 
     return {
         "device": device,

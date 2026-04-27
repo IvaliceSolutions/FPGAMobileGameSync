@@ -74,6 +74,55 @@ class RemoteScannerTests(unittest.TestCase):
         self.assertEqual(item["content_path"], "Golden Sun.sav")
         self.assertEqual(item["sync_key"], "systems/gba/saves/Golden Sun.sav")
 
+    def test_scan_remote_keeps_newest_duplicate_canonical_save_key(self) -> None:
+        client = FakeRemoteClient(
+            {
+                "/storage/emulated/0/RetroArch/saves/mGBA/Game.sav": b"old",
+                "/storage/emulated/0/RetroArch/saves/mGBA/Game.srm": b"new",
+            },
+            modified_ns={
+                "/storage/emulated/0/RetroArch/saves/mGBA/Game.sav": 1,
+                "/storage/emulated/0/RetroArch/saves/mGBA/Game.srm": 2,
+            },
+        )
+        config = _config("/storage/emulated/0")
+        config["devices"] = {
+            "thor": {
+                "remote": {"root": "/storage/emulated/0"},
+                "local": {"root": "/storage/emulated/0"},
+            }
+        }
+        config["systems"]["gba"]["paths"]["thor"] = {
+            "games": "RetroArch/games/GBA",
+            "saves": "RetroArch/saves/mGBA",
+            "bios": [],
+            "thumbnails": None,
+        }
+        config["systems"]["gba"]["file_extensions"]["saves"]["thor"] = [".sav", ".srm"]
+        config["systems"]["gba"]["save_conversion"] = {
+            "strategy": "raw_same_content",
+            "mister_to_thor": {"rename_extension_to": ".srm"},
+            "thor_to_mister": {"rename_extension_to": ".sav"},
+        }
+
+        manifest = scan_remote(
+            config=config,
+            device="thor",
+            systems=["gba"],
+            types=["saves"],
+            client=client,
+        )
+
+        self.assertEqual(manifest["summary"]["item_count"], 1)
+        self.assertEqual(manifest["summary"]["skipped_count"], 1)
+        self.assertEqual(manifest["items"][0]["native_content_path"], "Game.srm")
+        self.assertEqual(manifest["items"][0]["sync_key"], "systems/gba/saves/Game.sav")
+        self.assertEqual(manifest["skipped"][0]["reason"], "duplicate_sync_key_not_selected")
+        self.assertEqual(
+            manifest["skipped"][0]["path"],
+            "/storage/emulated/0/RetroArch/saves/mGBA/Game.sav",
+        )
+
     def test_scan_remote_skips_missing_paths(self) -> None:
         manifest = scan_remote(
             config=_config("/media/fat"),
@@ -88,15 +137,22 @@ class RemoteScannerTests(unittest.TestCase):
 
 
 class FakeRemoteClient:
-    def __init__(self, files: dict[str, bytes]) -> None:
+    def __init__(
+        self,
+        files: dict[str, bytes],
+        modified_ns: dict[str, int] | None = None,
+    ) -> None:
         self.files = {_normalize(path): data for path, data in files.items()}
+        self.modified_ns = {
+            _normalize(path): value for path, value in (modified_ns or {}).items()
+        }
 
     def stat(self, path: str) -> RemoteStat:
         path = _normalize(path)
         if path in self.files:
             return RemoteStat(
                 size=len(self.files[path]),
-                modified_ns=1,
+                modified_ns=self.modified_ns.get(path, 1),
                 is_file=True,
                 is_dir=False,
             )
