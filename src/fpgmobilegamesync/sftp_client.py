@@ -57,6 +57,7 @@ class SftpDeviceClient:
         password = _value_or_env(remote, "password", "password_env")
         key_filename = _value_or_env(remote, "private_key", "private_key_env")
         auth_options = _auth_options(remote, password, key_filename)
+        timeout_options = _timeout_options(remote)
         port = remote.get("port", 22)
         if not isinstance(port, int):
             raise SftpError(f"invalid SFTP port for device: {device}")
@@ -71,6 +72,7 @@ class SftpDeviceClient:
                 username=username,
                 password=password or None,
                 key_filename=key_filename or None,
+                **timeout_options,
                 **auth_options,
             )
             sftp_client = ssh_client.open_sftp()
@@ -193,6 +195,33 @@ def _auth_options(
         "look_for_keys": _remote_bool(remote, "look_for_keys", not has_explicit_auth),
         "allow_agent": _remote_bool(remote, "allow_agent", not has_explicit_auth),
     }
+
+
+def _timeout_options(remote: dict[str, Any]) -> dict[str, float]:
+    timeout = _positive_float(remote.get("timeout_seconds", 10.0), "timeout_seconds")
+    return {
+        "timeout": timeout,
+        "banner_timeout": _positive_float(
+            remote.get("banner_timeout_seconds", timeout),
+            "banner_timeout_seconds",
+        ),
+        "auth_timeout": _positive_float(
+            remote.get("auth_timeout_seconds", timeout),
+            "auth_timeout_seconds",
+        ),
+    }
+
+
+def _positive_float(value: Any, key: str) -> float:
+    if isinstance(value, bool):
+        raise SftpError(f"invalid SFTP {key}: {value}")
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise SftpError(f"invalid SFTP {key}: {value}") from exc
+    if number <= 0:
+        raise SftpError(f"invalid SFTP {key}: {value}")
+    return number
 
 
 def _remote_bool(remote: dict[str, Any], key: str, default: bool) -> bool:

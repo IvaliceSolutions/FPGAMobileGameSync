@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from fpgmobilegamesync.sftp_client import _auth_options
+from fpgmobilegamesync.sftp_client import SftpError, _auth_options, _timeout_options
 
 
 class SftpClientTests(unittest.TestCase):
@@ -27,6 +27,36 @@ class SftpClientTests(unittest.TestCase):
             ),
             {"look_for_keys": True, "allow_agent": True},
         )
+
+    def test_timeout_options_default_to_ten_seconds(self) -> None:
+        self.assertEqual(
+            _timeout_options({}),
+            {
+                "timeout": 10.0,
+                "banner_timeout": 10.0,
+                "auth_timeout": 10.0,
+            },
+        )
+
+    def test_timeout_options_can_be_overridden(self) -> None:
+        self.assertEqual(
+            _timeout_options(
+                {
+                    "timeout_seconds": 3,
+                    "banner_timeout_seconds": 4,
+                    "auth_timeout_seconds": 5,
+                }
+            ),
+            {
+                "timeout": 3.0,
+                "banner_timeout": 4.0,
+                "auth_timeout": 5.0,
+            },
+        )
+
+    def test_timeout_options_reject_invalid_values(self) -> None:
+        with self.assertRaises(SftpError):
+            _timeout_options({"timeout_seconds": 0})
 
 
 if __name__ == "__main__":
