@@ -116,6 +116,37 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(action["to_content_path"], "Lunar_fr_cd1.srm")
         self.assertTrue(action["rename_target_before_copy"])
 
+    def test_download_plan_skips_canonical_rename_when_native_save_path_is_already_correct(
+        self,
+    ) -> None:
+        source = _manifest([_item("psx", "saves", "Lunar_fr_cd1.sav", "same", 131072)])
+        target = _manifest(
+            [
+                _item(
+                    "psx",
+                    "saves",
+                    "Lunar.sav",
+                    "same",
+                    131072,
+                    native_content_path="Lunar_fr_cd1.srm",
+                )
+            ]
+        )
+
+        plan = build_plan(
+            source,
+            target,
+            mode="download",
+            source_name="s3",
+            target_name="thor",
+            config=_psx_mapping_config(),
+            target_device="thor",
+        )
+
+        self.assertEqual(plan["summary"]["noop"], 1)
+        action = plan["actions"][0]
+        self.assertEqual(action["reason"], "unchanged_native_path")
+
     def test_ambiguous_rename_becomes_conflict(self) -> None:
         source = _manifest([_item("gba", "saves", "Save.sav", "same", 4)])
         target = _manifest(
