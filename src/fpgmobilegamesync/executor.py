@@ -859,9 +859,23 @@ def _download_from_s3_to_sftp(
     _verify_store_object_fingerprint(store, source_key, source, role="source")
     existing_target_path = _remote_existing_target_path_for_download(action, target_root)
     backup_path = None
+    can_resume_to_sftp = item_uses_size_fingerprint(source) and not _should_convert_for_target(
+        source,
+        config,
+        target_device,
+    )
     if "target" in action and _sftp_exists(client, existing_target_path):
         _verify_sftp_file_fingerprint(client, existing_target_path, action["target"], role="target")
-    if action.get("backup_target_before_apply") and _sftp_exists(client, existing_target_path):
+    skip_partial_game_backup = can_resume_to_sftp and _sftp_target_is_smaller_than_source(
+        client,
+        existing_target_path,
+        source,
+    )
+    if (
+        action.get("backup_target_before_apply")
+        and _sftp_exists(client, existing_target_path)
+        and not skip_partial_game_backup
+    ):
         backup_path = _backup_sftp_file(
             client,
             existing_target_path,
@@ -879,11 +893,6 @@ def _download_from_s3_to_sftp(
 
     conversion_result = None
     transfer_result: dict[str, Any] = {}
-    can_resume_to_sftp = item_uses_size_fingerprint(source) and not _should_convert_for_target(
-        source,
-        config,
-        target_device,
-    )
     if can_resume_to_sftp:
         transfer_result = _download_s3_to_sftp_resumable(
             store=store,
@@ -960,6 +969,21 @@ def _remote_target_already_matches_source(client: Any, path: str, source: dict[s
     except Exception:
         return False
     return int(stat.size) == int(expected_size)
+
+
+def _sftp_target_is_smaller_than_source(
+    client: Any,
+    path: str,
+    source: dict[str, Any],
+) -> bool:
+    expected_size = source.get("native_size", source.get("size"))
+    if expected_size is None:
+        return False
+    try:
+        stat = client.stat(path)
+    except Exception:
+        return False
+    return int(stat.size) < int(expected_size)
 
 
 def _rename_remote(

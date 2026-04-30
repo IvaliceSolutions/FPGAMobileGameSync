@@ -522,10 +522,7 @@ class S3ObjectStoreTests(unittest.TestCase):
 
         self.assertEqual(result["summary"]["download:applied"], 1)
         self.assertEqual(remote.files["/target/Game.gba"], b"complete-rom")
-        self.assertEqual(
-            remote.files["/trash/backups/2026-04-30T12-00-00Z/s3/Game.gba"],
-            b"part",
-        )
+        self.assertFalse(any(path.startswith("/trash/backups/") for path in remote.files))
         self.assertFalse(any(".fpgms-tmp" in path for path in remote.files))
         self.assertIn(("remove", "/target/Game.gba"), remote.operations)
         self.assertTrue(
