@@ -967,6 +967,12 @@ class FakeRemoteClient:
             raise SftpError(f"missing: {old_path}")
         self.files[new_path] = self.files.pop(old_path)
 
+    def remove(self, path: str) -> None:
+        path = _normalize(path)
+        if path not in self.files:
+            raise SftpError(f"missing: {path}")
+        del self.files[path]
+
     def close(self) -> None:
         return None
 

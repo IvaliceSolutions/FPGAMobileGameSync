@@ -734,7 +734,7 @@ def _download_from_s3_to_sftp(
                 output_path=converted_path,
             )
             _verify_conversion_fingerprint(conversion_result, source)
-            _write_sftp_file(
+            _write_sftp_file_atomically(
                 client,
                 target_path,
                 converted_path.read_bytes(),
@@ -742,7 +742,7 @@ def _download_from_s3_to_sftp(
                 label=f"write {posixpath.basename(target_path)}",
             )
         else:
-            _write_sftp_file(
+            _write_sftp_file_atomically(
                 client,
                 target_path,
                 staged_path.read_bytes(),
@@ -1348,11 +1348,61 @@ def _write_sftp_file(
         raise ApplyError(str(exc)) from exc
 
 
+def _write_sftp_file_atomically(
+    client: Any,
+    path: str,
+    data: bytes,
+    progress: ProgressReporter | None = None,
+    label: str | None = None,
+) -> None:
+    temp_path = _temporary_sftp_write_path(path)
+    try:
+        if _sftp_exists(client, temp_path):
+            _remove_sftp_file(client, temp_path)
+        _write_sftp_file(client, temp_path, data, progress=progress, label=label)
+        _verify_sftp_size(client, temp_path, len(data), role="staged target")
+        if _sftp_exists(client, path):
+            _remove_sftp_file(client, path)
+        _rename_sftp_path_case_aware(client, temp_path, path)
+    except Exception:
+        try:
+            if _sftp_exists(client, temp_path):
+                _remove_sftp_file(client, temp_path)
+        except Exception:
+            pass
+        raise
+
+
+def _temporary_sftp_write_path(path: str) -> str:
+    parent = posixpath.dirname(path)
+    name = posixpath.basename(path)
+    return posixpath.join(parent, f".{name}.fpgms-tmp")
+
+
 def _sftp_exists(client: Any, path: str) -> bool:
     try:
         return bool(client.exists(path))
     except SftpError as exc:
         raise ApplyError(str(exc)) from exc
+
+
+def _remove_sftp_file(client: Any, path: str) -> None:
+    try:
+        client.remove(path)
+    except SftpError as exc:
+        raise ApplyError(str(exc)) from exc
+
+
+def _verify_sftp_size(client: Any, path: str, expected_size: int, role: str) -> None:
+    try:
+        actual_size = int(client.stat(path).size)
+    except Exception as exc:
+        raise ApplyError(f"failed to stat {role} file {path}: {exc}") from exc
+    if actual_size != expected_size:
+        raise ApplyError(
+            f"{role} file changed during write: {path}; "
+            f"size {actual_size} != expected {expected_size}"
+        )
 
 
 def _rename_sftp_path_case_aware(client: Any, old_path: str, new_path: str) -> None:

@@ -489,6 +489,84 @@ class S3ObjectStoreTests(unittest.TestCase):
         self.assertEqual(result["applied"][0]["reason"], "already_downloaded")
         self.assertNotIn("systems/gba/games/Game.gba", client.get_object_keys)
 
+    def test_apply_s3_download_replaces_partial_sftp_target_atomically(self) -> None:
+        client = FakeS3Client({"systems/gba/games/Game.gba": b"complete-rom"})
+        store = S3ObjectStore(client=client, bucket="bucket")
+        source = _s3_item("Game.gba", b"complete-rom")
+        target = _s3_item("Game.gba", b"part")
+        target["absolute_path"] = "/target/Game.gba"
+        plan = {
+            "source": "s3",
+            "target": "thor",
+            "actions": [
+                {
+                    "operation": "download",
+                    "reason": "modified",
+                    "backup_target_before_apply": True,
+                    "source": source,
+                    "target": target,
+                }
+            ],
+        }
+        remote = FakeRemoteClient({"/target/Game.gba": b"part"})
+
+        result = apply_plan_from_s3_to_sftp_target(
+            plan=plan,
+            config={},
+            client=remote,
+            target_root="/target",
+            trash_root="/trash",
+            timestamp_utc="2026-04-30T12-00-00Z",
+            store=store,
+        )
+
+        self.assertEqual(result["summary"]["download:applied"], 1)
+        self.assertEqual(remote.files["/target/Game.gba"], b"complete-rom")
+        self.assertEqual(
+            remote.files["/trash/backups/2026-04-30T12-00-00Z/s3/Game.gba"],
+            b"part",
+        )
+        self.assertFalse(any(".fpgms-tmp" in path for path in remote.files))
+        self.assertIn(("remove", "/target/Game.gba"), remote.operations)
+        self.assertTrue(
+            any(
+                operation[0] == "rename" and operation[2] == "/target/Game.gba"
+                for operation in remote.operations
+            )
+        )
+
+    def test_failed_s3_download_write_keeps_existing_sftp_target(self) -> None:
+        client = FakeS3Client({"systems/gba/games/Game.gba": b"complete-rom"})
+        store = S3ObjectStore(client=client, bucket="bucket")
+        source = _s3_item("Game.gba", b"complete-rom")
+        target = _s3_item("Game.gba", b"part")
+        target["absolute_path"] = "/target/Game.gba"
+        plan = {
+            "source": "s3",
+            "target": "thor",
+            "actions": [
+                {
+                    "operation": "download",
+                    "reason": "modified",
+                    "source": source,
+                    "target": target,
+                }
+            ],
+        }
+        remote = FakeRemoteClient({"/target/Game.gba": b"part"})
+        remote.fail_writes_matching = ".fpgms-tmp"
+
+        with self.assertRaises(ApplyError):
+            apply_plan_from_s3_to_sftp_target(
+                plan=plan,
+                config={},
+                client=remote,
+                target_root="/target",
+                store=store,
+            )
+
+        self.assertEqual(remote.files["/target/Game.gba"], b"part")
+
     def test_apply_download_refuses_when_s3_source_changed_since_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target_root = Path(tmp) / "target"
@@ -565,6 +643,8 @@ class FakeRemoteClient:
     def __init__(self, files: dict[str, bytes] | None = None) -> None:
         self.files = files or {}
         self.read_attempted = False
+        self.operations: list[tuple[str, ...]] = []
+        self.fail_writes_matching: str | None = None
 
     def stat(self, path: str) -> RemoteStat:
         if path not in self.files:
@@ -581,10 +661,28 @@ class FakeRemoteClient:
 
     def read_file(self, path: str, **_kwargs: object) -> bytes:
         self.read_attempted = True
-        raise AssertionError(f"unexpected remote read: {path}")
+        if path not in self.files:
+            raise SftpError(f"missing: {path}")
+        return self.files[path]
 
     def write_file(self, path: str, data: bytes, **_kwargs: object) -> None:
+        self.operations.append(("write", path))
+        if self.fail_writes_matching and self.fail_writes_matching in path:
+            self.files[path] = data[: max(0, len(data) // 2)]
+            raise SftpError(f"simulated write failure: {path}")
         self.files[path] = data
+
+    def remove(self, path: str) -> None:
+        self.operations.append(("remove", path))
+        if path not in self.files:
+            raise SftpError(f"missing: {path}")
+        del self.files[path]
+
+    def rename(self, old_path: str, new_path: str) -> None:
+        self.operations.append(("rename", old_path, new_path))
+        if old_path not in self.files:
+            raise SftpError(f"missing: {old_path}")
+        self.files[new_path] = self.files.pop(old_path)
 
 
 class FakeNotFound(Exception):
