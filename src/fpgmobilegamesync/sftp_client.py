@@ -8,6 +8,8 @@ import stat as stat_module
 from dataclasses import dataclass
 from typing import Any
 
+from .progress import ProgressReporter
+
 
 class SftpError(Exception):
     """Raised when an SFTP operation cannot be completed."""
@@ -98,18 +100,36 @@ class SftpDeviceClient:
         except Exception as exc:
             raise SftpError(f"failed to list remote path {path}: {exc}") from exc
 
-    def read_file(self, path: str) -> bytes:
+    def read_file(self, path: str, progress: ProgressReporter | None = None, label: str | None = None) -> bytes:
         try:
+            stat = self.stat(path)
+            reporter = progress or ProgressReporter(False)
+            chunks: list[bytes] = []
             with self.sftp_client.open(path, "rb") as handle:
-                return handle.read()
+                with reporter.task(label or f"read {posixpath.basename(path)}", stat.size) as task:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        chunks.append(chunk)
+                        task.update(len(chunk))
+            return b"".join(chunks)
         except Exception as exc:
             raise SftpError(f"failed to read remote file {path}: {exc}") from exc
 
-    def write_file(self, path: str, data: bytes) -> None:
+    def write_file(
+        self,
+        path: str,
+        data: bytes,
+        progress: ProgressReporter | None = None,
+        label: str | None = None,
+    ) -> None:
         self.makedirs(posixpath.dirname(path))
         try:
+            reporter = progress or ProgressReporter(False)
             with self.sftp_client.open(path, "wb") as handle:
-                handle.write(data)
+                with reporter.task(label or f"write {posixpath.basename(path)}", len(data)) as task:
+                    for offset in range(0, len(data), 1024 * 1024):
+                        chunk = data[offset : offset + 1024 * 1024]
+                        handle.write(chunk)
+                        task.update(len(chunk))
         except Exception as exc:
             raise SftpError(f"failed to write remote file {path}: {exc}") from exc
 

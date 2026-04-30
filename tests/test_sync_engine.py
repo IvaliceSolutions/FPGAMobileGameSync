@@ -88,6 +88,107 @@ class SyncEngineTests(unittest.TestCase):
                 save_data,
             )
 
+    def test_apply_psx_auto_mapping_from_thor_disc_save_to_mister_folder(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mister_root = root / "mister"
+            thor_root = root / "thor"
+            store_root = root / "store"
+            (mister_root / "games/PSX/Final Fantasy 9 (FR)").mkdir(parents=True)
+            (mister_root / "saves/PSX").mkdir(parents=True)
+            (thor_root / "RetroArch/games/PSX/Final Fantasy 9 (FR)").mkdir(parents=True)
+            (thor_root / "RetroArch/saves/SwanStation").mkdir(parents=True)
+            (mister_root / "games/PSX/Final Fantasy 9 (FR)/Final Fantasy 9 (FR).cue").write_text(
+                "disc",
+                encoding="utf-8",
+            )
+            (
+                thor_root
+                / "RetroArch/games/PSX/Final Fantasy 9 (FR)/Final Fantasy IX (France) (Disc 2).chd"
+            ).write_bytes(b"game")
+            save_data = _raw_psx_card()
+            (
+                thor_root
+                / "RetroArch/saves/SwanStation/Final Fantasy IX (France) (Disc 2).srm"
+            ).write_bytes(save_data)
+            config = _config_with_psx(mister_root, thor_root)
+            config["defaults"]["types"] = ["games", "saves"]
+            config["save_mappings"] = {"psx": []}
+            config["systems"]["psx"]["paths"]["mister"]["games"] = "games/PSX"
+            config["systems"]["psx"]["paths"]["thor"]["games"] = "RetroArch/games/PSX"
+            config["systems"]["psx"]["file_extensions"]["games"] = [
+                ".cue",
+                ".bin",
+                ".chd",
+                ".m3u",
+            ]
+
+            result = run_local_sync(
+                config=config,
+                direction="thor-to-mister",
+                store_root=store_root,
+                systems=["psx"],
+                types=["saves"],
+                apply=True,
+                timestamp_utc="2026-04-26T20-45-00Z",
+            )
+
+            self.assertEqual(result["auto_save_mappings"]["summary"]["inferred"], 1)
+            self.assertEqual(
+                result["auto_save_mappings"]["mappings"][0]["retroarch_game_file_stem"],
+                "Final Fantasy IX (France) (Disc 2)",
+            )
+            self.assertEqual(
+                (mister_root / "saves/PSX/Final Fantasy 9 (FR).sav").read_bytes(),
+                save_data,
+            )
+
+    def test_apply_psx_game_sync_preserves_mister_game_folder_on_thor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mister_root = root / "mister"
+            thor_root = root / "thor"
+            store_root = root / "store"
+            game_path = (
+                mister_root
+                / "games/PSX/Final Fantasy 9 (FR)/Final Fantasy IX (France) (Disc 2).chd"
+            )
+            game_path.parent.mkdir(parents=True)
+            (thor_root / "RetroArch/games/PSX").mkdir(parents=True)
+            game_path.write_bytes(b"game")
+            config = _config_with_psx(mister_root, thor_root)
+            config["defaults"]["types"] = ["games", "saves"]
+            config["systems"]["psx"]["paths"]["mister"]["games"] = "games/PSX"
+            config["systems"]["psx"]["paths"]["thor"]["games"] = "RetroArch/games/PSX"
+            config["systems"]["psx"]["file_extensions"]["games"] = [
+                ".cue",
+                ".bin",
+                ".chd",
+                ".m3u",
+            ]
+
+            result = run_local_sync(
+                config=config,
+                direction="mister-to-thor",
+                store_root=store_root,
+                systems=["psx"],
+                types=["games"],
+                apply=True,
+                timestamp_utc="2026-04-26T20-45-00Z",
+            )
+
+            self.assertEqual(result["upload_plan"]["summary"]["upload"], 1)
+            self.assertEqual(result["download_plan"]["summary"]["download"], 1)
+            self.assertEqual(
+                (
+                    thor_root
+                    / "RetroArch/games/PSX/Final Fantasy 9 (FR)/Final Fantasy IX (France) (Disc 2).chd"
+                ).read_bytes(),
+                b"game",
+            )
+
     def test_cli_sync_dry_run_reports_both_plans(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -735,10 +836,17 @@ def _raw_psx_card() -> bytes:
     for entry in range(15):
         offset = (entry + 1) * 128
         data[offset] = 0xA0
+        data[offset + 8 : offset + 10] = (0xFFFF).to_bytes(2, byteorder="little")
     offset = 128
     data[offset] = 0x51
     data[offset + 4 : offset + 8] = (8192).to_bytes(4, byteorder="little")
+    data[offset + 8 : offset + 10] = (0xFFFF).to_bytes(2, byteorder="little")
     data[offset + 10 : offset + 26] = b"BASCUS-00000SAVE"
+    data[8192:8194] = b"SC"
+    for frame_index in range(16, 64):
+        start = frame_index * 128
+        data[start : start + 4] = b"\xFF\xFF\xFF\xFF"
+        data[start + 8 : start + 10] = (0xFFFF).to_bytes(2, byteorder="little")
     for frame_index in range(16):
         start = frame_index * 128
         checksum = 0

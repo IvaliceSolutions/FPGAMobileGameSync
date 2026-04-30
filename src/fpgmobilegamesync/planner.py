@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .compare import compare_manifests
+from .psx_memory_card import EMPTY_CARD_SHA256ES
 from .save_paths import is_convertible_save, native_save_content_path
 
 
@@ -41,6 +42,14 @@ def build_plan(
         )
         for action in comparison["actions"]
     ]
+    actions = _protect_download_native_path_collisions(
+        actions=actions,
+        target=target,
+        mode=mode,
+        config=config,
+        target_device=target_device,
+    )
+    actions = _protect_psx_nonempty_targets(actions)
 
     return {
         "mode": mode,
@@ -302,6 +311,167 @@ def _is_hash_only_convertible_save_match(
         system=source["system"],
         content_type=source["type"],
     )
+
+
+def _protect_download_native_path_collisions(
+    actions: list[dict[str, Any]],
+    target: dict[str, Any],
+    mode: str,
+    config: dict[str, Any] | None,
+    target_device: str | None,
+) -> list[dict[str, Any]]:
+    if mode != "download" or config is None or target_device is None:
+        return actions
+
+    protected_actions = list(actions)
+    occupied_paths = {_item_native_path(item): item for item in target.get("items", [])}
+    pending_writes: dict[str, list[int]] = {}
+
+    for index, action in enumerate(actions):
+        output_path = _download_native_output_path(
+            action=action,
+            config=config,
+            target_device=target_device,
+        )
+        if output_path is None:
+            continue
+
+        pending_writes.setdefault(output_path, []).append(index)
+        occupied = occupied_paths.get(output_path)
+        source = action["source"]
+        if occupied is not None and occupied["content_path"] != source["content_path"]:
+            protected_actions[index] = _native_path_conflict(
+                source=source,
+                native_content_path=output_path,
+                candidates=[occupied],
+            )
+
+    for output_path, indexes in pending_writes.items():
+        if len(indexes) <= 1:
+            continue
+        candidates = [actions[index]["source"] for index in indexes]
+        for index in indexes:
+            protected_actions[index] = _native_path_conflict(
+                source=actions[index]["source"],
+                native_content_path=output_path,
+                candidates=candidates,
+            )
+
+    return protected_actions
+
+
+def _download_native_output_path(
+    action: dict[str, Any],
+    config: dict[str, Any],
+    target_device: str,
+) -> str | None:
+    if action["operation"] != "download" or "source" not in action:
+        return None
+
+    source = action["source"]
+    if not is_convertible_save(
+        config=config,
+        system=source["system"],
+        content_type=source["type"],
+    ):
+        return None
+
+    return native_save_content_path(
+        config=config,
+        system=source["system"],
+        device=target_device,
+        canonical_content_path=source["content_path"],
+    )
+
+
+def _item_native_path(item: dict[str, Any]) -> str:
+    return item.get("native_content_path", item["content_path"])
+
+
+def _native_path_conflict(
+    source: dict[str, Any],
+    native_content_path: str,
+    candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "operation": "conflict",
+        "reason": "native_path_conflict",
+        "source": source,
+        "native_content_path": native_content_path,
+        "candidates": candidates,
+        "requires_manual_resolution": True,
+    }
+
+
+def _protect_psx_nonempty_targets(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    protected_actions = list(actions)
+    for index, action in enumerate(actions):
+        if _psx_empty_source_would_overwrite_nonempty_target(action):
+            protected_actions[index] = _psx_card_content_conflict(
+                reason="empty_psx_source_would_overwrite_save",
+                source=action["source"],
+                target=action["target"],
+            )
+            continue
+        if _psx_nonempty_target_would_be_deleted(action):
+            protected_actions[index] = _psx_card_content_conflict(
+                reason="nonempty_psx_target_would_be_deleted",
+                source=None,
+                target=action["target"],
+            )
+    return protected_actions
+
+
+def _psx_empty_source_would_overwrite_nonempty_target(action: dict[str, Any]) -> bool:
+    if action["operation"] not in {"upload", "download"}:
+        return False
+    source = action.get("source")
+    target = action.get("target")
+    if source is None or target is None:
+        return False
+    if not _is_psx_save(source) or not _is_psx_save(target):
+        return False
+    return _is_empty_psx_card(source) and not _is_empty_psx_card(target)
+
+
+def _psx_nonempty_target_would_be_deleted(action: dict[str, Any]) -> bool:
+    if action["operation"] not in {"trash_remote", "trash_local"}:
+        return False
+    target = action.get("target")
+    if target is None or not _is_psx_save(target):
+        return False
+    return not _is_empty_psx_card(target)
+
+
+def _is_psx_save(item: dict[str, Any]) -> bool:
+    return item.get("system") == "psx" and item.get("type") == "saves"
+
+
+def _is_empty_psx_card(item: dict[str, Any]) -> bool:
+    native_sha256 = item.get("native_sha256")
+    if native_sha256:
+        return native_sha256 in EMPTY_CARD_SHA256ES
+
+    sha256 = item.get("sha256")
+    canonical_sha256 = item.get("canonical_sha256")
+    hashes = {value for value in {sha256, canonical_sha256} if value}
+    return bool(hashes) and hashes.issubset(EMPTY_CARD_SHA256ES)
+
+
+def _psx_card_content_conflict(
+    reason: str,
+    source: dict[str, Any] | None,
+    target: dict[str, Any],
+) -> dict[str, Any]:
+    conflict = {
+        "operation": "conflict",
+        "reason": reason,
+        "target": target,
+        "requires_manual_resolution": True,
+    }
+    if source is not None:
+        conflict["source"] = source
+    return conflict
 
 
 def _summary(actions: list[dict[str, Any]]) -> dict[str, int]:

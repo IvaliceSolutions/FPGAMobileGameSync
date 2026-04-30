@@ -7,6 +7,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from .fingerprint import size_fingerprint, uses_size_fingerprint
+
 
 class CompareError(Exception):
     """Raised when manifests cannot be compared."""
@@ -166,6 +168,13 @@ def _casefold_path(path: str) -> str:
 
 
 def _hash_key(item: dict[str, Any]) -> tuple[str, str, str, int]:
+    if uses_size_fingerprint(item["system"], item["type"]):
+        return (
+            item["system"],
+            item["type"],
+            size_fingerprint(item["content_path"], int(item["canonical_size"])),
+            int(item["canonical_size"]),
+        )
     return (
         item["system"],
         item["type"],
@@ -175,6 +184,11 @@ def _hash_key(item: dict[str, Any]) -> tuple[str, str, str, int]:
 
 
 def _same_content(source_item: dict[str, Any], target_item: dict[str, Any]) -> bool:
+    if (
+        uses_size_fingerprint(source_item["system"], source_item["type"])
+        and uses_size_fingerprint(target_item["system"], target_item["type"])
+    ):
+        return int(source_item["canonical_size"]) == int(target_item["canonical_size"])
     return (
         source_item["canonical_sha256"] == target_item["canonical_sha256"]
         and int(source_item["canonical_size"]) == int(target_item["canonical_size"])

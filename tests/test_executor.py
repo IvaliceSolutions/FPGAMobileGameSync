@@ -125,7 +125,7 @@ class ExecutorTests(unittest.TestCase):
             source_file = source_root / "Changed.gba"
             source_file.write_bytes(b"planned")
             source_item = _item(source_file, "Changed.gba")
-            source_file.write_bytes(b"mutated")
+            source_file.write_bytes(b"mutated-long")
 
             plan = {
                 "source": "mister",
@@ -505,6 +505,7 @@ class ExecutorTests(unittest.TestCase):
                 system="psx",
             )
             source_item["canonical_sha256"] = "0" * 64
+            source_item["canonical_format"] = "psx_raw_memory_card_v2"
             plan = {
                 "mode": "download",
                 "source": "s3",
@@ -575,10 +576,17 @@ def _raw_psx_card() -> bytes:
     for entry in range(15):
         offset = (entry + 1) * 128
         data[offset] = 0xA0
+        data[offset + 8 : offset + 10] = (0xFFFF).to_bytes(2, byteorder="little")
     offset = 128
     data[offset] = 0x51
     data[offset + 4 : offset + 8] = (8192).to_bytes(4, byteorder="little")
+    data[offset + 8 : offset + 10] = (0xFFFF).to_bytes(2, byteorder="little")
     data[offset + 10 : offset + 26] = b"BASCUS-00000SAVE"
+    data[8192:8194] = b"SC"
+    for frame_index in range(16, 64):
+        start = frame_index * 128
+        data[start : start + 4] = b"\xFF\xFF\xFF\xFF"
+        data[start + 8 : start + 10] = (0xFFFF).to_bytes(2, byteorder="little")
     for frame_index in range(16):
         start = frame_index * 128
         checksum = 0

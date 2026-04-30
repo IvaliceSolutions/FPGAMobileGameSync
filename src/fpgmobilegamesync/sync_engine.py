@@ -18,6 +18,11 @@ from .executor import (
 )
 from .object_store import LocalObjectStore
 from .planner import build_plan
+from .progress import ProgressReporter
+from .psx_auto_mapping import (
+    infer_psx_save_mappings,
+    merge_inferred_psx_save_mappings,
+)
 from .remote_scanner import scan_remote
 from .s3_store import S3ObjectStore
 from .scanner import scan
@@ -41,6 +46,7 @@ def run_local_sync(
     allow_conflicts: bool = False,
     skip_deletes: bool = False,
     report_dir: Path | None = None,
+    progress: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     """Run source -> local object store -> target sync on local paths."""
 
@@ -50,6 +56,18 @@ def run_local_sync(
         runtime_config["devices"][source_device]["local"]["root"] = str(source_root)
     if target_root is not None:
         runtime_config["devices"][target_device]["local"]["root"] = str(target_root)
+
+    auto_save_mappings = _infer_and_merge_auto_psx_save_mappings(
+        config=runtime_config,
+        source_device=source_device,
+        target_device=target_device,
+        systems=systems,
+        types=types,
+        source_backend="local",
+        target_backend="local",
+        source_client=None,
+        target_client=None,
+    )
 
     source_manifest = scan(
         config=runtime_config,
@@ -82,6 +100,7 @@ def run_local_sync(
             allow_conflicts=allow_conflicts,
             config=runtime_config,
             source_device=source_device,
+            progress=progress,
         )
 
     store_manifest_after_upload = _filter_manifest(
@@ -115,6 +134,7 @@ def run_local_sync(
             target_device=target_device,
             timestamp_utc=timestamp_utc,
             allow_conflicts=allow_conflicts,
+            progress=progress,
         )
 
     result = {
@@ -124,6 +144,7 @@ def run_local_sync(
         "source_device": source_device,
         "target_device": target_device,
         "skip_deletes": skip_deletes,
+        "auto_save_mappings": auto_save_mappings,
         "store_root": str(store_root),
         "source_summary": source_manifest["summary"],
         "store_summary_before_upload": store_manifest_before["summary"],
@@ -173,6 +194,7 @@ def run_s3_sync(
     source_scan_backend: str | None = None,
     target_scan_backend: str | None = None,
     skip_deletes: bool = False,
+    progress: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     """Run source -> S3/Garage -> target sync on local or SFTP device roots."""
     if scan_backend not in {"local", "sftp"}:
@@ -220,6 +242,17 @@ def run_s3_sync(
             )
 
         try:
+            auto_save_mappings = _infer_and_merge_auto_psx_save_mappings(
+                config=runtime_config,
+                source_device=source_device,
+                target_device=target_device,
+                systems=systems,
+                types=types,
+                source_backend=source_backend,
+                target_backend=target_backend,
+                source_client=clients.get(source_device),
+                target_client=clients.get(target_device),
+            )
             source_manifest = _scan_device(
                 config=runtime_config,
                 device=source_device,
@@ -229,7 +262,7 @@ def run_s3_sync(
                 sftp_client=clients.get(source_device),
             )
             store_manifest_before = _filter_manifest(
-                s3_store.scan(),
+                _scan_s3_store_for_planning(s3_store, runtime_config, types),
                 systems=systems,
                 types=types,
             )
@@ -254,6 +287,7 @@ def run_s3_sync(
                         allow_conflicts=allow_conflicts,
                         source_device=source_device,
                         store=s3_store,
+                        progress=progress,
                     )
                 else:
                     upload_apply = apply_plan_to_s3_store(
@@ -263,10 +297,11 @@ def run_s3_sync(
                         allow_conflicts=allow_conflicts,
                         source_device=source_device,
                         store=s3_store,
+                        progress=progress,
                     )
 
             store_manifest_after_upload = _filter_manifest(
-                s3_store.scan(),
+                _scan_s3_store_for_planning(s3_store, runtime_config, types),
                 systems=systems,
                 types=types,
             )
@@ -301,6 +336,7 @@ def run_s3_sync(
                         allow_conflicts=allow_conflicts,
                         store=s3_store,
                         client=clients[target_device],
+                        progress=progress,
                     )
                 else:
                     download_apply = _apply_s3_download_plan_to_device(
@@ -310,6 +346,7 @@ def run_s3_sync(
                         timestamp_utc=timestamp_utc,
                         allow_conflicts=allow_conflicts,
                         store=s3_store,
+                        progress=progress,
                     )
         finally:
             if lock is not None:
@@ -328,6 +365,7 @@ def run_s3_sync(
         "source_device": source_device,
         "target_device": target_device,
         "skip_deletes": skip_deletes,
+        "auto_save_mappings": auto_save_mappings,
         "store": {
             "backend": "s3",
             "bucket": s3_store.bucket,
@@ -372,6 +410,7 @@ def _apply_download_plan_to_device(
     target_device: str,
     timestamp_utc: str | None,
     allow_conflicts: bool,
+    progress: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     groups: dict[Path, list[dict[str, Any]]] = {}
     for action in plan["actions"]:
@@ -394,6 +433,7 @@ def _apply_download_plan_to_device(
                     allow_conflicts=allow_conflicts,
                     config=config,
                     target_device=target_device,
+                    progress=progress,
                 ),
             }
         )
@@ -404,6 +444,17 @@ def _apply_download_plan_to_device(
     }
 
 
+def _scan_s3_store_for_planning(
+    store: S3ObjectStore,
+    config: dict[str, Any],
+    types: list[str] | None,
+) -> dict[str, Any]:
+    selected_types = types or list(config["defaults"]["types"])
+    if "games" in selected_types:
+        return store.scan_live()
+    return store.scan()
+
+
 def _apply_s3_download_plan_to_device(
     config: dict[str, Any],
     plan: dict[str, Any],
@@ -411,6 +462,7 @@ def _apply_s3_download_plan_to_device(
     timestamp_utc: str | None,
     allow_conflicts: bool,
     store: S3ObjectStore,
+    progress: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     groups: dict[Path, list[dict[str, Any]]] = {}
     for action in plan["actions"]:
@@ -434,6 +486,7 @@ def _apply_s3_download_plan_to_device(
                     allow_conflicts=allow_conflicts,
                     target_device=target_device,
                     store=store,
+                    progress=progress,
                 ),
             }
         )
@@ -452,6 +505,7 @@ def _apply_s3_download_plan_to_sftp_device(
     allow_conflicts: bool,
     store: S3ObjectStore,
     client: Any,
+    progress: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     groups: dict[str, list[dict[str, Any]]] = {}
     for action in plan["actions"]:
@@ -476,6 +530,7 @@ def _apply_s3_download_plan_to_sftp_device(
                     allow_conflicts=allow_conflicts,
                     target_device=target_device,
                     store=store,
+                    progress=progress,
                 ),
             }
         )
@@ -505,6 +560,66 @@ def _scan_device(
             client=sftp_client,
         )
     raise SyncError(f"unsupported scan backend: {scan_backend}")
+
+
+def _infer_and_merge_auto_psx_save_mappings(
+    config: dict[str, Any],
+    source_device: str,
+    target_device: str,
+    systems: list[str] | None,
+    types: list[str] | None,
+    source_backend: str,
+    target_backend: str,
+    source_client: Any | None,
+    target_client: Any | None,
+) -> dict[str, Any]:
+    if not _should_infer_psx_save_mappings(config, systems, types):
+        return {"mappings": [], "skipped": [], "summary": {"inferred": 0, "skipped": 0}}
+
+    manifests = []
+    for device, backend, client in (
+        (source_device, source_backend, source_client),
+        (target_device, target_backend, target_client),
+    ):
+        manifests.append(
+            _scan_device(
+                config=config,
+                device=device,
+                systems=["psx"],
+                types=["games"],
+                scan_backend=backend,
+                sftp_client=client,
+            )
+        )
+        manifests.append(
+            _scan_device(
+                config=config,
+                device=device,
+                systems=["psx"],
+                types=["saves"],
+                scan_backend=backend,
+                sftp_client=client,
+            )
+        )
+
+    inferred = infer_psx_save_mappings(config=config, manifests=manifests)
+    merge_inferred_psx_save_mappings(config=config, inferred=inferred)
+    return inferred
+
+
+def _should_infer_psx_save_mappings(
+    config: dict[str, Any],
+    systems: list[str] | None,
+    types: list[str] | None,
+) -> bool:
+    if "psx" not in config.get("systems", {}):
+        return False
+    configured_types = set(config.get("defaults", {}).get("types", []))
+    if not {"games", "saves"}.issubset(configured_types):
+        return False
+    selected_systems = set(systems or config.get("defaults", {}).get("systems", []))
+    selected_types = set(types or config.get("defaults", {}).get("types", []))
+    return "psx" in selected_systems and "saves" in selected_types
 
 
 def _filter_manifest(

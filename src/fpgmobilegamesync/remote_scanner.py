@@ -8,7 +8,17 @@ import posixpath
 from dataclasses import asdict
 from typing import Any, Iterable
 
-from .psx_memory_card import PsxMemoryCardError, canonical_psx_memory_card_bytes_from_data
+from .fingerprint import (
+    SHA256_FINGERPRINT,
+    SIZE_FINGERPRINT,
+    size_fingerprint,
+    uses_size_fingerprint,
+)
+from .psx_memory_card import (
+    CANONICAL_FORMAT as PSX_CANONICAL_FORMAT,
+    PsxMemoryCardError,
+    canonical_psx_memory_card_bytes_from_data,
+)
 from .save_paths import canonical_save_content_path, is_convertible_save
 from .scanner import ScanError, ScanItem, deduplicate_scan_items
 from .sftp_client import RemoteDirEntry, SftpDeviceClient, SftpError
@@ -162,14 +172,23 @@ def _scan_remote_file(
     path: str,
     stat: Any,
 ) -> ScanItem:
-    data = client.read_file(path)
     native_size = stat.size
-    native_sha256 = hashlib.sha256(data).hexdigest()
-    canonical_size = native_size
-    canonical_sha256 = native_sha256
     native_content_path = _relpath(path, content_root)
     content_path = native_content_path
+    data: bytes | None = None
+    fingerprint_type = SHA256_FINGERPRINT
+    if uses_size_fingerprint(system, content_type):
+        native_sha256 = size_fingerprint(content_path, native_size)
+        fingerprint_type = SIZE_FINGERPRINT
+    else:
+        data = client.read_file(path)
+        native_sha256 = hashlib.sha256(data).hexdigest()
+    canonical_size = native_size
+    canonical_sha256 = native_sha256
+    canonical_format = ""
     if is_convertible_save(config=config, system=system, content_type=content_type):
+        if data is None:
+            data = client.read_file(path)
         content_path = canonical_save_content_path(
             config=config,
             system=system,
@@ -183,6 +202,7 @@ def _scan_remote_file(
                 raise ScanError(str(exc)) from exc
             canonical_size = len(canonical_bytes)
             canonical_sha256 = hashlib.sha256(canonical_bytes).hexdigest()
+            canonical_format = PSX_CANONICAL_FORMAT
     return ScanItem(
         device=device,
         system=system,
@@ -199,6 +219,8 @@ def _scan_remote_file(
         sha256=canonical_sha256,
         native_sha256=native_sha256,
         canonical_sha256=canonical_sha256,
+        canonical_format=canonical_format,
+        fingerprint_type=fingerprint_type,
     )
 
 

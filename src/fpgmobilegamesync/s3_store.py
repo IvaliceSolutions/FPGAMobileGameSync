@@ -11,7 +11,15 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from .fingerprint import (
+    SHA256_FINGERPRINT,
+    SIZE_FINGERPRINT,
+    item_uses_size_fingerprint,
+    size_fingerprint,
+    uses_size_fingerprint,
+)
 from .object_store import ObjectStoreError
+from .progress import ProgressReporter
 
 
 @dataclass(frozen=True)
@@ -70,7 +78,7 @@ class S3ObjectStore:
         items = []
         for entry in self._list_objects("systems/"):
             sync_key = self._strip_prefix(entry["Key"])
-            item = self._scan_live_object(sync_key)
+            item = self._scan_live_object(sync_key, size=entry.get("Size"))
             if item is not None:
                 items.append(item)
         return {
@@ -99,13 +107,25 @@ class S3ObjectStore:
         expected_size = item.get("native_size")
         if expected_sha is None and expected_size is None:
             return
-        data = self._get_object_bytes(sync_key)
-        actual_size = len(data)
+        if item_uses_size_fingerprint(item):
+            try:
+                response = self.client.head_object(
+                    Bucket=self.bucket,
+                    Key=self._remote_key(sync_key),
+                )
+            except Exception as exc:
+                raise ObjectStoreError(f"failed to stat S3 object {sync_key}: {exc}") from exc
+            actual_size = int(response["ContentLength"])
+        else:
+            data = self._get_object_bytes(sync_key)
+            actual_size = len(data)
         if expected_size is not None and actual_size != int(expected_size):
             raise ObjectStoreError(
                 f"{role} S3 object changed since plan: {sync_key}; "
                 f"size {actual_size} != expected {expected_size}"
             )
+        if item_uses_size_fingerprint(item):
+            return
         if expected_sha is not None:
             actual_sha = hashlib.sha256(data).hexdigest()
             if actual_sha != expected_sha:
@@ -114,9 +134,21 @@ class S3ObjectStore:
                     f"sha256 {actual_sha} != expected {expected_sha}"
                 )
 
-    def put_file(self, source_path: Path, sync_key: str) -> None:
-        data = source_path.read_bytes()
+    def put_file(
+        self,
+        source_path: Path,
+        sync_key: str,
+        progress: ProgressReporter | None = None,
+        label: str | None = None,
+    ) -> None:
+        if self._put_file_with_progress_callback(source_path, sync_key, progress, label):
+            return
         try:
+            data = _read_path_bytes_with_progress(
+                source_path,
+                progress=progress,
+                label=label or f"upload {source_path.name}",
+            )
             self.client.put_object(
                 Bucket=self.bucket,
                 Key=self._remote_key(sync_key),
@@ -129,8 +161,18 @@ class S3ObjectStore:
         except Exception as exc:
             raise ObjectStoreError(f"failed to upload S3 object {sync_key}: {exc}") from exc
 
-    def download_file(self, sync_key: str, target_path: Path) -> None:
-        data = self._get_object_bytes(sync_key)
+    def download_file(
+        self,
+        sync_key: str,
+        target_path: Path,
+        progress: ProgressReporter | None = None,
+        label: str | None = None,
+    ) -> None:
+        data = self._get_object_bytes(
+            sync_key,
+            progress=progress,
+            label=label or f"download {Path(sync_key).name}",
+        )
         target_path.parent.mkdir(parents=True, exist_ok=True)
         target_path.write_bytes(data)
 
@@ -365,7 +407,12 @@ class S3ObjectStore:
             token = response.get("NextContinuationToken")
         return entries
 
-    def _get_object_bytes(self, sync_key: str) -> bytes:
+    def _get_object_bytes(
+        self,
+        sync_key: str,
+        progress: ProgressReporter | None = None,
+        label: str | None = None,
+    ) -> bytes:
         try:
             response = self.client.get_object(
                 Bucket=self.bucket,
@@ -374,7 +421,15 @@ class S3ObjectStore:
         except Exception as exc:
             raise ObjectStoreError(f"failed to read S3 object {sync_key}: {exc}") from exc
         try:
-            return _read_body(response["Body"])
+            total = None
+            if "ContentLength" in response:
+                total = int(response["ContentLength"])
+            return _read_body(
+                response["Body"],
+                progress=progress,
+                label=label or f"download {Path(sync_key).name}",
+                total=total,
+            )
         except KeyError as exc:
             raise ObjectStoreError(f"invalid S3 response for object {sync_key}") from exc
 
@@ -397,29 +452,47 @@ class S3ObjectStore:
             raise ObjectStoreError(f"invalid S3 lock: {lock_key}")
         return lock
 
-    def _scan_live_object(self, sync_key: str) -> dict[str, Any] | None:
+    def _scan_live_object(self, sync_key: str, size: int | None = None) -> dict[str, Any] | None:
         parts = Path(sync_key).parts
         if len(parts) < 4 or parts[0] != "systems":
             return None
-        data = self._get_object_bytes(sync_key)
-        sha256 = hashlib.sha256(data).hexdigest()
+        system = parts[1]
+        content_type = parts[2]
         content_path = str(Path(*parts[3:]))
+        if uses_size_fingerprint(system, content_type):
+            if size is None:
+                try:
+                    response = self.client.head_object(
+                        Bucket=self.bucket,
+                        Key=self._remote_key(sync_key),
+                    )
+                except Exception as exc:
+                    raise ObjectStoreError(f"failed to stat S3 object {sync_key}: {exc}") from exc
+                size = int(response["ContentLength"])
+            sha256 = size_fingerprint(content_path, size)
+            fingerprint_type = SIZE_FINGERPRINT
+        else:
+            data = self._get_object_bytes(sync_key)
+            size = len(data)
+            sha256 = hashlib.sha256(data).hexdigest()
+            fingerprint_type = SHA256_FINGERPRINT
         return {
             "device": "s3",
-            "system": parts[1],
-            "type": parts[2],
+            "system": system,
+            "type": content_type,
             "absolute_path": self._remote_key(sync_key),
             "relative_path": sync_key,
             "content_path": content_path,
             "native_content_path": content_path,
             "sync_key": sync_key,
-            "size": len(data),
-            "native_size": len(data),
-            "canonical_size": len(data),
+            "size": size,
+            "native_size": size,
+            "canonical_size": size,
             "modified_ns": 0,
             "sha256": sha256,
             "native_sha256": sha256,
             "canonical_sha256": sha256,
+            "fingerprint_type": fingerprint_type,
         }
 
     def _remote_key(self, sync_key: str) -> str:
@@ -437,6 +510,42 @@ class S3ObjectStore:
         if not remote_key.startswith(prefix):
             raise ObjectStoreError(f"S3 key is outside configured prefix: {remote_key}")
         return remote_key[len(prefix) :]
+
+    def _put_file_with_progress_callback(
+        self,
+        source_path: Path,
+        sync_key: str,
+        progress: ProgressReporter | None,
+        label: str | None,
+    ) -> bool:
+        if progress is None or not progress.enabled or not hasattr(self.client, "upload_fileobj"):
+            return False
+        parts = Path(sync_key).parts
+        if len(parts) < 4 or parts[0] != "systems":
+            return False
+        system = parts[1]
+        content_type = parts[2]
+        if not uses_size_fingerprint(system, content_type):
+            return False
+        content_path = str(Path(*parts[3:]))
+        size = source_path.stat().st_size
+        metadata = {
+            "sha256": size_fingerprint(content_path, size),
+            "size": str(size),
+        }
+        try:
+            with progress.task(label or f"upload {source_path.name}", size) as task:
+                with source_path.open("rb") as handle:
+                    self.client.upload_fileobj(
+                        handle,
+                        self.bucket,
+                        self._remote_key(sync_key),
+                        ExtraArgs={"Metadata": metadata},
+                        Callback=task.update,
+                    )
+            return True
+        except Exception as exc:
+            raise ObjectStoreError(f"failed to upload S3 object {sync_key}: {exc}") from exc
 
 
 def s3_connection_from_config(config: dict[str, Any]) -> S3Connection:
@@ -480,16 +589,22 @@ def require_systems_sync_key(sync_key: str) -> None:
 def _build_boto3_client(connection: S3Connection) -> Any:
     try:
         import boto3  # type: ignore[import-not-found]
+        from botocore.config import Config  # type: ignore[import-not-found]
     except ModuleNotFoundError as exc:
         raise ObjectStoreError(
             "S3 backend requires boto3. From the repo, install with: pip install '.[s3]'"
         ) from exc
+    client_config = Config(
+        request_checksum_calculation="when_required",
+        response_checksum_validation="when_required",
+    )
     return boto3.client(
         "s3",
         endpoint_url=connection.endpoint_url,
         aws_access_key_id=connection.access_key_id,
         aws_secret_access_key=connection.secret_access_key,
         region_name=connection.region,
+        config=client_config,
     )
 
 
@@ -532,13 +647,43 @@ def _empty_manifest(manifest_key: str) -> dict[str, Any]:
     }
 
 
-def _read_body(body: Any) -> bytes:
-    data = body.read() if hasattr(body, "read") else body
+def _read_body(
+    body: Any,
+    progress: ProgressReporter | None = None,
+    label: str = "download",
+    total: int | None = None,
+) -> bytes:
+    if hasattr(body, "read") and progress is not None:
+        chunks: list[bytes] = []
+        reporter = progress
+        with reporter.task(label, total) as task:
+            for chunk in iter(lambda: body.read(1024 * 1024), b""):
+                chunks.append(chunk)
+                task.update(len(chunk))
+        data = b"".join(chunks)
+    else:
+        data = body.read() if hasattr(body, "read") else body
     if isinstance(data, str):
         return data.encode("utf-8")
     if isinstance(data, bytes):
         return data
     raise ObjectStoreError("S3 response body is not bytes")
+
+
+def _read_path_bytes_with_progress(
+    path: Path,
+    progress: ProgressReporter | None,
+    label: str,
+    chunk_size: int = 1024 * 1024,
+) -> bytes:
+    reporter = progress or ProgressReporter(False)
+    chunks: list[bytes] = []
+    with reporter.task(label, path.stat().st_size) as task:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(chunk_size), b""):
+                chunks.append(chunk)
+                task.update(len(chunk))
+    return b"".join(chunks)
 
 
 def _is_missing_object_error(exc: Exception) -> bool:

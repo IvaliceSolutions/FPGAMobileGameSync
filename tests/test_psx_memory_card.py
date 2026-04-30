@@ -70,10 +70,17 @@ def _raw_card() -> bytes:
     for entry in range(15):
         offset = (entry + 1) * 128
         data[offset] = 0xA0
+        data[offset + 8 : offset + 10] = (0xFFFF).to_bytes(2, byteorder="little")
     first = 128
     data[first] = 0x51
     data[first + 4 : first + 8] = (8192).to_bytes(4, byteorder="little")
+    data[first + 8 : first + 10] = (0xFFFF).to_bytes(2, byteorder="little")
     data[first + 10 : first + 26] = b"BASCUS-00000SAVE"
+    data[8192:8194] = b"SC"
+    for frame_index in range(16, 64):
+        offset = frame_index * 128
+        data[offset : offset + 4] = b"\xFF\xFF\xFF\xFF"
+        data[offset + 8 : offset + 10] = (0xFFFF).to_bytes(2, byteorder="little")
     for frame_index in range(16):
         offset = frame_index * 128
         data[offset + 127] = _checksum(data[offset : offset + 128])

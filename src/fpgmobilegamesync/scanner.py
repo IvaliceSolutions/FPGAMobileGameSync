@@ -9,7 +9,17 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from .psx_memory_card import PsxMemoryCardError, canonical_psx_memory_card_bytes
+from .fingerprint import (
+    SHA256_FINGERPRINT,
+    SIZE_FINGERPRINT,
+    size_fingerprint,
+    uses_size_fingerprint,
+)
+from .psx_memory_card import (
+    CANONICAL_FORMAT as PSX_CANONICAL_FORMAT,
+    PsxMemoryCardError,
+    canonical_psx_memory_card_bytes,
+)
 from .save_paths import canonical_save_content_path, is_convertible_save
 
 
@@ -34,6 +44,8 @@ class ScanItem:
     sha256: str
     native_sha256: str
     canonical_sha256: str
+    canonical_format: str = ""
+    fingerprint_type: str = SHA256_FINGERPRINT
 
 
 def scan(
@@ -201,11 +213,17 @@ def _scan_file(
 ) -> ScanItem:
     stat = path.stat()
     native_size = stat.st_size
-    native_sha256 = _sha256(path)
-    canonical_size = native_size
-    canonical_sha256 = native_sha256
     native_content_path = str(path.relative_to(content_root))
     content_path = native_content_path
+    fingerprint_type = SHA256_FINGERPRINT
+    if uses_size_fingerprint(system, content_type):
+        native_sha256 = size_fingerprint(content_path, native_size)
+        fingerprint_type = SIZE_FINGERPRINT
+    else:
+        native_sha256 = _sha256(path)
+    canonical_size = native_size
+    canonical_sha256 = native_sha256
+    canonical_format = ""
     if is_convertible_save(config=config, system=system, content_type=content_type):
         content_path = canonical_save_content_path(
             config=config,
@@ -220,6 +238,7 @@ def _scan_file(
                 raise ScanError(str(exc)) from exc
             canonical_size = len(canonical_bytes)
             canonical_sha256 = hashlib.sha256(canonical_bytes).hexdigest()
+            canonical_format = PSX_CANONICAL_FORMAT
     return ScanItem(
         device=device,
         system=system,
@@ -236,6 +255,8 @@ def _scan_file(
         sha256=canonical_sha256,
         native_sha256=native_sha256,
         canonical_sha256=canonical_sha256,
+        canonical_format=canonical_format,
+        fingerprint_type=fingerprint_type,
     )
 
 

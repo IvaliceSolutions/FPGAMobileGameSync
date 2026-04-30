@@ -13,10 +13,13 @@ from unittest.mock import patch
 from fpgmobilegamesync.executor import (
     ApplyError,
     apply_plan_from_s3_to_local_target,
+    apply_plan_from_s3_to_sftp_target,
+    apply_plan_from_sftp_to_s3_store,
     apply_plan_to_s3_store,
 )
 from fpgmobilegamesync.object_store import ObjectStoreError
 from fpgmobilegamesync.s3_store import S3ObjectStore, s3_connection_from_config
+from fpgmobilegamesync.sftp_client import RemoteStat, SftpError
 
 
 class S3ObjectStoreTests(unittest.TestCase):
@@ -44,6 +47,7 @@ class S3ObjectStoreTests(unittest.TestCase):
         client = FakeS3Client(
             {
                 "systems/gba/saves/Game.sav": b"save",
+                "systems/gba/games/Game.gba": b"rom",
                 "trash/2026/mister/systems/gba/saves/Old.sav": b"old",
             }
         )
@@ -51,12 +55,16 @@ class S3ObjectStoreTests(unittest.TestCase):
 
         manifest = store.scan_live()
 
-        self.assertEqual(manifest["summary"]["item_count"], 1)
-        self.assertEqual(manifest["items"][0]["sync_key"], "systems/gba/saves/Game.sav")
+        self.assertEqual(manifest["summary"]["item_count"], 2)
+        save_item = next(item for item in manifest["items"] if item["type"] == "saves")
+        game_item = next(item for item in manifest["items"] if item["type"] == "games")
         self.assertEqual(
-            manifest["items"][0]["sha256"],
+            save_item["sha256"],
             hashlib.sha256(b"save").hexdigest(),
         )
+        self.assertEqual(game_item["fingerprint_type"], "size")
+        self.assertEqual(game_item["sha256"], "size:game.gba:3")
+        self.assertNotIn("systems/gba/games/Game.gba", client.get_object_keys)
 
     def test_scan_returns_empty_manifest_when_manifest_is_missing(self) -> None:
         store = S3ObjectStore(client=FakeS3Client({}), bucket="bucket")
@@ -342,6 +350,40 @@ class S3ObjectStoreTests(unittest.TestCase):
             with self.assertRaises(ApplyError):
                 apply_plan_to_s3_store(plan=plan, config={}, store=store)
 
+    def test_apply_sftp_upload_skips_game_already_present_in_s3(self) -> None:
+        client = FakeS3Client({"systems/gba/games/Game.gba": b"rom"})
+        store = S3ObjectStore(client=client, bucket="bucket")
+        source = _s3_item("Game.gba", b"rom")
+        source["device"] = "mister"
+        source["absolute_path"] = "/media/fat/games/GBA/Game.gba"
+        source["fingerprint_type"] = "size"
+        source["sha256"] = "size:game.gba:3"
+        source["native_sha256"] = "size:game.gba:3"
+        source["canonical_sha256"] = "size:game.gba:3"
+        plan = {
+            "source": "mister",
+            "target": "s3",
+            "actions": [
+                {
+                    "operation": "upload",
+                    "reason": "modified",
+                    "source": source,
+                }
+            ],
+        }
+        remote = FakeRemoteClient()
+
+        result = apply_plan_from_sftp_to_s3_store(
+            plan=plan,
+            config={},
+            client=remote,
+            store=store,
+        )
+
+        self.assertEqual(result["summary"]["upload:skipped"], 1)
+        self.assertEqual(result["applied"][0]["reason"], "already_uploaded")
+        self.assertFalse(remote.read_attempted)
+
     def test_apply_download_plan_from_s3_to_local_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -414,11 +456,44 @@ class S3ObjectStoreTests(unittest.TestCase):
             self.assertEqual(result["summary"]["download:applied"], 2)
             self.assertEqual(result["summary"]["rename_local:applied"], 1)
 
+    def test_apply_s3_download_skips_game_already_present_on_sftp_target(self) -> None:
+        client = FakeS3Client({"systems/gba/games/Game.gba": b"corrupt-on-read"})
+        store = S3ObjectStore(client=client, bucket="bucket")
+        source = _s3_item("Game.gba", b"rom")
+        source["fingerprint_type"] = "size"
+        source["sha256"] = "size:game.gba:3"
+        source["native_sha256"] = "size:game.gba:3"
+        source["canonical_sha256"] = "size:game.gba:3"
+        plan = {
+            "source": "s3",
+            "target": "thor",
+            "actions": [
+                {
+                    "operation": "download",
+                    "reason": "modified",
+                    "source": source,
+                }
+            ],
+        }
+        remote = FakeRemoteClient({"/target/Game.gba": b"rom"})
+
+        result = apply_plan_from_s3_to_sftp_target(
+            plan=plan,
+            config={},
+            client=remote,
+            target_root="/target",
+            store=store,
+        )
+
+        self.assertEqual(result["summary"]["download:skipped"], 1)
+        self.assertEqual(result["applied"][0]["reason"], "already_downloaded")
+        self.assertNotIn("systems/gba/games/Game.gba", client.get_object_keys)
+
     def test_apply_download_refuses_when_s3_source_changed_since_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target_root = Path(tmp) / "target"
             target_root.mkdir()
-            client = FakeS3Client({"systems/gba/games/Game.gba": b"mutated"})
+            client = FakeS3Client({"systems/gba/games/Game.gba": b"mutated-long"})
             store = S3ObjectStore(client=client, bucket="bucket")
             plan = {
                 "mode": "download",
@@ -445,9 +520,11 @@ class S3ObjectStoreTests(unittest.TestCase):
 class FakeS3Client:
     def __init__(self, objects: dict[str, bytes]) -> None:
         self.objects = dict(objects)
+        self.get_object_keys: list[str] = []
 
     def get_object(self, Bucket: str, Key: str) -> dict:
         self._require(Key)
+        self.get_object_keys.append(Key)
         return {"Body": io.BytesIO(self.objects[Key])}
 
     def put_object(self, Bucket: str, Key: str, Body: bytes, **kwargs: object) -> None:
@@ -482,6 +559,32 @@ class FakeS3Client:
     def _require(self, key: str) -> None:
         if key not in self.objects:
             raise FakeNotFound(key)
+
+
+class FakeRemoteClient:
+    def __init__(self, files: dict[str, bytes] | None = None) -> None:
+        self.files = files or {}
+        self.read_attempted = False
+
+    def stat(self, path: str) -> RemoteStat:
+        if path not in self.files:
+            raise SftpError(f"missing: {path}")
+        return RemoteStat(
+            size=len(self.files[path]),
+            modified_ns=1,
+            is_file=True,
+            is_dir=False,
+        )
+
+    def exists(self, path: str) -> bool:
+        return path in self.files
+
+    def read_file(self, path: str, **_kwargs: object) -> bytes:
+        self.read_attempted = True
+        raise AssertionError(f"unexpected remote read: {path}")
+
+    def write_file(self, path: str, data: bytes, **_kwargs: object) -> None:
+        self.files[path] = data
 
 
 class FakeNotFound(Exception):

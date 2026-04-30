@@ -33,6 +33,11 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(manifest["summary"]["item_count"], 2)
             self.assertEqual(manifest["summary"]["skipped_count"], 1)
             self.assertEqual(manifest["skipped"][0]["reason"], "not_configured")
+            game_item = next(item for item in manifest["items"] if item["type"] == "games")
+            save_item = next(item for item in manifest["items"] if item["type"] == "saves")
+            self.assertEqual(game_item["fingerprint_type"], "size")
+            self.assertEqual(game_item["sha256"], "size:game.gba:3")
+            self.assertEqual(save_item["fingerprint_type"], "sha256")
 
     def test_scan_normalizes_thor_raw_save_extension_to_canonical_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

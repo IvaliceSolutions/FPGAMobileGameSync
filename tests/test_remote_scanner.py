@@ -32,8 +32,12 @@ class RemoteScannerTests(unittest.TestCase):
         self.assertEqual(relative_paths, {"games/GBA/Game.gba", "saves/GBA/Game.sav"})
         self.assertEqual(manifest["backend"], "sftp")
         self.assertEqual(manifest["summary"]["item_count"], 2)
+        game_item = next(item for item in manifest["items"] if item["type"] == "games")
         save_item = next(item for item in manifest["items"] if item["content_path"] == "Game.sav")
+        self.assertEqual(game_item["fingerprint_type"], "size")
+        self.assertEqual(game_item["sha256"], "size:game.gba:3")
         self.assertEqual(save_item["sha256"], hashlib.sha256(b"save").hexdigest())
+        self.assertNotIn("/media/fat/games/GBA/Game.gba", client.read_paths)
 
     def test_scan_remote_normalizes_thor_save_name(self) -> None:
         client = FakeRemoteClient(
@@ -146,6 +150,7 @@ class FakeRemoteClient:
         self.modified_ns = {
             _normalize(path): value for path, value in (modified_ns or {}).items()
         }
+        self.read_paths: list[str] = []
 
     def stat(self, path: str) -> RemoteStat:
         path = _normalize(path)
@@ -177,6 +182,7 @@ class FakeRemoteClient:
 
     def read_file(self, path: str) -> bytes:
         path = _normalize(path)
+        self.read_paths.append(path)
         if path not in self.files:
             raise SftpError(f"missing: {path}")
         return self.files[path]

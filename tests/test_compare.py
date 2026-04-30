@@ -10,11 +10,11 @@ class CompareTests(unittest.TestCase):
         source = _manifest(
             [
                 _item("gba", "games", "Same.gba", "aaa", 3),
-                _item("gba", "games", "Changed.gba", "new", 3),
+                _item("gba", "games", "Changed.gba", "new", 4),
                 _item("gba", "games", "New.gba", "add", 3),
-                _item("snes", "games", "New Name.sfc", "ren", 3),
-                _item("snes", "games", "Folder/Moved.sfc", "mov", 3),
-                _item("psx", "games", "Game New/Disc 1.cue", "both", 4),
+                _item("gba", "saves", "New Name.sav", "ren", 3),
+                _item("snes", "saves", "Folder/Moved.srm", "mov", 3),
+                _item("psx", "saves", "Game New/Disc 1.sav", "both", 4),
             ]
         )
         target = _manifest(
@@ -22,9 +22,9 @@ class CompareTests(unittest.TestCase):
                 _item("gba", "games", "Same.gba", "aaa", 3),
                 _item("gba", "games", "Changed.gba", "old", 3),
                 _item("gba", "games", "Deleted.gba", "del", 3),
-                _item("snes", "games", "Old Name.sfc", "ren", 3),
-                _item("snes", "games", "Moved.sfc", "mov", 3),
-                _item("psx", "games", "Game Old/Disc A.cue", "both", 4),
+                _item("gba", "saves", "Old Name.sav", "ren", 3),
+                _item("snes", "saves", "Moved.srm", "mov", 3),
+                _item("psx", "saves", "Game Old/Disc A.sav", "both", 4),
             ]
         )
 
@@ -113,6 +113,27 @@ class CompareTests(unittest.TestCase):
         result = compare_manifests(source, target)
 
         self.assertEqual(result["summary"]["unchanged"], 1)
+
+    def test_compare_games_by_name_and_size_without_hash_rename(self) -> None:
+        source = _manifest(
+            [
+                _item("gba", "games", "Same.gba", "new-hash", 3),
+                _item("gba", "games", "Renamed.gba", "same-hash", 4),
+            ]
+        )
+        target = _manifest(
+            [
+                _item("gba", "games", "Same.gba", "old-hash", 3),
+                _item("gba", "games", "OldName.gba", "same-hash", 4),
+            ]
+        )
+
+        result = compare_manifests(source, target)
+
+        self.assertEqual(result["summary"]["unchanged"], 1)
+        self.assertEqual(result["summary"]["added"], 1)
+        self.assertEqual(result["summary"]["deleted"], 1)
+        self.assertNotIn("renamed", result["summary"])
 
 
 def _manifest(items: list[dict]) -> dict:

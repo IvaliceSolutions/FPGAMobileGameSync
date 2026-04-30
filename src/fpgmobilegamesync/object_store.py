@@ -12,6 +12,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from .fingerprint import (
+    SHA256_FINGERPRINT,
+    SIZE_FINGERPRINT,
+    item_uses_size_fingerprint,
+    size_fingerprint,
+    uses_size_fingerprint,
+)
+from .progress import ProgressReporter, copy_file_with_progress
+
 
 class ObjectStoreError(Exception):
     """Raised when an object-store operation fails."""
@@ -34,6 +43,7 @@ class ObjectItem:
     sha256: str
     native_sha256: str
     canonical_sha256: str
+    fingerprint_type: str = SHA256_FINGERPRINT
 
 
 class LocalObjectStore:
@@ -59,10 +69,21 @@ class LocalObjectStore:
             },
         }
 
-    def put_file(self, source_path: Path, sync_key: str) -> None:
+    def put_file(
+        self,
+        source_path: Path,
+        sync_key: str,
+        progress: ProgressReporter | None = None,
+        label: str | None = None,
+    ) -> None:
         target_path = self._object_path(sync_key)
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_path, target_path)
+        copy_file_with_progress(
+            source_path,
+            target_path,
+            progress,
+            label or f"upload {source_path.name}",
+        )
+        shutil.copystat(source_path, target_path)
 
     def object_exists(self, sync_key: str) -> bool:
         return self._object_path(sync_key).exists()
@@ -201,7 +222,12 @@ def _scan_object(root: Path, path: Path) -> ObjectItem | None:
     content_type = parts[2]
     content_path = str(Path(*parts[3:]))
     stat = path.stat()
-    sha256 = _sha256(path)
+    fingerprint_type = SHA256_FINGERPRINT
+    if uses_size_fingerprint(system, content_type):
+        sha256 = size_fingerprint(content_path, stat.st_size)
+        fingerprint_type = SIZE_FINGERPRINT
+    else:
+        sha256 = _sha256(path)
     return ObjectItem(
         device="s3",
         system=system,
@@ -218,6 +244,7 @@ def _scan_object(root: Path, path: Path) -> ObjectItem | None:
         sha256=sha256,
         native_sha256=sha256,
         canonical_sha256=sha256,
+        fingerprint_type=fingerprint_type,
     )
 
 
@@ -297,6 +324,8 @@ def _verify_file_fingerprint(path: Path, item: dict[str, Any], role: str) -> Non
             f"{role} object changed since plan: {path}; "
             f"size {actual_size} != expected {expected_size}"
         )
+    if item_uses_size_fingerprint(item):
+        return
     if expected_sha is not None:
         actual_sha = _sha256(path)
         if actual_sha != expected_sha:

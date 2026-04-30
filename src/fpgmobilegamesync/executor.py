@@ -12,7 +12,9 @@ from pathlib import Path
 from typing import Any
 
 from .converter import ConversionError, convert_save_file
+from .fingerprint import item_uses_size_fingerprint
 from .object_store import LocalObjectStore
+from .progress import ProgressReporter, copy_file_with_progress
 from .s3_store import S3ObjectStore
 from .save_paths import is_convertible_save, native_save_content_path
 from .sftp_client import SftpError
@@ -39,6 +41,7 @@ def apply_plan_to_local_store(
     allow_conflicts: bool = False,
     config: dict[str, Any] | None = None,
     source_device: str | None = None,
+    progress: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     store = LocalObjectStore(store_root)
     source_device = source_device or str(plan.get("source", "source"))
@@ -54,6 +57,7 @@ def apply_plan_to_local_store(
                 allow_conflicts=allow_conflicts,
                 config=config,
                 source_device=source_device,
+                progress=progress,
             )
         )
 
@@ -76,6 +80,7 @@ def apply_plan_to_s3_store(
     allow_conflicts: bool = False,
     source_device: str | None = None,
     store: S3ObjectStore | None = None,
+    progress: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     s3_store = store or S3ObjectStore.from_config(config)
     source_device = source_device or str(plan.get("source", "source"))
@@ -91,6 +96,7 @@ def apply_plan_to_s3_store(
                 allow_conflicts=allow_conflicts,
                 config=config,
                 source_device=source_device,
+                progress=progress,
             )
         )
 
@@ -113,6 +119,7 @@ def apply_plan_from_sftp_to_s3_store(
     allow_conflicts: bool = False,
     source_device: str | None = None,
     store: S3ObjectStore | None = None,
+    progress: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     s3_store = store or S3ObjectStore.from_config(config)
     source_device = source_device or str(plan.get("source", "source"))
@@ -129,6 +136,7 @@ def apply_plan_from_sftp_to_s3_store(
                     timestamp_utc=timestamp_utc,
                     config=config,
                     source_device=source_device,
+                    progress=progress,
                 )
             )
         else:
@@ -141,6 +149,7 @@ def apply_plan_from_sftp_to_s3_store(
                     allow_conflicts=allow_conflicts,
                     config=config,
                     source_device=source_device,
+                    progress=progress,
                 )
             )
 
@@ -164,6 +173,7 @@ def apply_plan_from_s3_to_local_target(
     allow_conflicts: bool = False,
     target_device: str | None = None,
     store: S3ObjectStore | None = None,
+    progress: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     s3_store = store or S3ObjectStore.from_config(config)
     trash_base = trash_root or (target_root / ".sync_trash")
@@ -182,6 +192,7 @@ def apply_plan_from_s3_to_local_target(
                     timestamp_utc=timestamp_utc,
                     config=config,
                     target_device=target_device,
+                    progress=progress,
                 )
             )
         else:
@@ -195,6 +206,7 @@ def apply_plan_from_s3_to_local_target(
                     allow_conflicts=allow_conflicts,
                     config=config,
                     target_device=target_device,
+                    progress=progress,
                 )
             )
 
@@ -217,6 +229,7 @@ def apply_plan_from_s3_to_sftp_target(
     allow_conflicts: bool = False,
     target_device: str | None = None,
     store: S3ObjectStore | None = None,
+    progress: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     s3_store = store or S3ObjectStore.from_config(config)
     trash_base = trash_root or posixpath.join(target_root, ".sync_trash")
@@ -236,6 +249,7 @@ def apply_plan_from_s3_to_sftp_target(
                 allow_conflicts=allow_conflicts,
                 config=config,
                 target_device=target_device,
+                progress=progress,
             )
         )
 
@@ -256,6 +270,7 @@ def apply_plan_to_local_target(
     allow_conflicts: bool = False,
     config: dict[str, Any] | None = None,
     target_device: str | None = None,
+    progress: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     trash_base = trash_root or (target_root / ".sync_trash")
     target_device = target_device or str(plan.get("target", "target"))
@@ -272,6 +287,7 @@ def apply_plan_to_local_target(
                 allow_conflicts=allow_conflicts,
                 config=config,
                 target_device=target_device,
+                progress=progress,
             )
         )
 
@@ -292,6 +308,7 @@ def _apply_action(
     allow_conflicts: bool,
     config: dict[str, Any] | None,
     source_device: str,
+    progress: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     operation = action["operation"]
 
@@ -302,7 +319,7 @@ def _apply_action(
             raise ApplyError("plan contains conflicts; refusing to apply")
         return {"operation": operation, "status": "skipped", "reason": action["reason"]}
     if operation == "upload":
-        return _upload(store, action, origin_device, timestamp_utc, config, source_device)
+        return _upload(store, action, origin_device, timestamp_utc, config, source_device, progress)
     if operation == "rename_remote":
         return _rename_remote(store, action)
     if operation == "trash_remote":
@@ -320,6 +337,7 @@ def _apply_local_action(
     allow_conflicts: bool,
     config: dict[str, Any] | None,
     target_device: str,
+    progress: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     operation = action["operation"]
 
@@ -338,6 +356,7 @@ def _apply_local_action(
             timestamp_utc,
             config,
             target_device,
+            progress,
         )
     if operation == "rename_local":
         return _rename_local(action, target_root, config, target_device)
@@ -358,6 +377,7 @@ def _apply_sftp_target_action(
     allow_conflicts: bool,
     config: dict[str, Any] | None,
     target_device: str,
+    progress: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     operation = action["operation"]
 
@@ -378,6 +398,7 @@ def _apply_sftp_target_action(
             timestamp_utc,
             config,
             target_device,
+            progress,
         )
     if operation == "rename_local":
         return _rename_sftp(action, client, target_root, config, target_device)
@@ -394,6 +415,7 @@ def _upload(
     timestamp_utc: str | None,
     config: dict[str, Any] | None,
     source_device: str,
+    progress: ProgressReporter | None,
 ) -> dict[str, Any]:
     source = action["source"]
     source_path = Path(source["absolute_path"])
@@ -402,6 +424,13 @@ def _upload(
     _verify_file_fingerprint(source_path, source, role="source")
 
     target_key = _target_sync_key(action)
+    if _store_object_already_matches_source(store, target_key, source):
+        return {
+            "operation": "upload",
+            "status": "skipped",
+            "reason": "already_uploaded",
+            "sync_key": target_key,
+        }
     existing_target_key = action.get("target", {}).get("sync_key", target_key)
     backup_key = None
     if "target" in action and store.object_exists(existing_target_key):
@@ -435,9 +464,19 @@ def _upload(
                 output_path=converted_path,
             )
             _verify_conversion_fingerprint(conversion_result, source)
-            store.put_file(converted_path, target_key)
+            store.put_file(
+                converted_path,
+                target_key,
+                progress=progress,
+                label=f"upload {Path(target_key).name}",
+            )
     else:
-        store.put_file(source_path, target_key)
+        store.put_file(
+            source_path,
+            target_key,
+            progress=progress,
+            label=f"upload {Path(target_key).name}",
+        )
 
     result = {
         "operation": "upload",
@@ -459,10 +498,25 @@ def _upload_from_sftp(
     timestamp_utc: str | None,
     config: dict[str, Any] | None,
     source_device: str,
+    progress: ProgressReporter | None,
 ) -> dict[str, Any]:
     source = action["source"]
     source_path = source["absolute_path"]
-    data = _read_sftp_file(client, source_path)
+    target_key = _target_sync_key(action)
+    if _store_object_already_matches_source(store, target_key, source):
+        return {
+            "operation": "upload",
+            "status": "skipped",
+            "reason": "already_uploaded",
+            "sync_key": target_key,
+            "source_remote_path": source_path,
+        }
+    data = _read_sftp_file(
+        client,
+        source_path,
+        progress=progress,
+        label=f"read {posixpath.basename(source_path)}",
+    )
     _verify_bytes_fingerprint(data, source, source_path, role="source")
     with tempfile.TemporaryDirectory() as tmp:
         staged_path = Path(tmp) / posixpath.basename(source_path)
@@ -478,9 +532,26 @@ def _upload_from_sftp(
             timestamp_utc=timestamp_utc,
             config=config,
             source_device=source_device,
+            progress=progress,
         )
     result["source_remote_path"] = source_path
     return result
+
+
+def _store_object_already_matches_source(
+    store: LocalObjectStore | S3ObjectStore,
+    sync_key: str,
+    source: dict[str, Any],
+) -> bool:
+    if not item_uses_size_fingerprint(source):
+        return False
+    if not store.object_exists(sync_key):
+        return False
+    try:
+        store.verify_object_fingerprint(sync_key, source, role="target")
+    except Exception:
+        return False
+    return True
 
 
 def _download(
@@ -491,6 +562,7 @@ def _download(
     timestamp_utc: str | None,
     config: dict[str, Any] | None,
     target_device: str,
+    progress: ProgressReporter | None,
 ) -> dict[str, Any]:
     source = action["source"]
     source_path = Path(source["absolute_path"])
@@ -529,7 +601,13 @@ def _download(
         )
         _verify_conversion_fingerprint(conversion_result, source)
     else:
-        shutil.copy2(source_path, target_path)
+        copy_file_with_progress(
+            source_path,
+            target_path,
+            progress,
+            label=f"copy {target_path.name}",
+        )
+        shutil.copystat(source_path, target_path)
 
     result = {
         "operation": "download",
@@ -552,13 +630,28 @@ def _download_from_s3(
     timestamp_utc: str | None,
     config: dict[str, Any] | None,
     target_device: str,
+    progress: ProgressReporter | None,
 ) -> dict[str, Any]:
     source = action["source"]
     source_key = source["sync_key"]
+    target_path = _target_path_for_download(action, target_root, config, target_device)
+    if _local_target_already_matches_source(target_path, source):
+        return {
+            "operation": "download",
+            "status": "skipped",
+            "reason": "already_downloaded",
+            "path": str(target_path),
+            "source_sync_key": source_key,
+        }
     _verify_store_object_fingerprint(store, source_key, source, role="source")
     with tempfile.TemporaryDirectory() as tmp:
         staged_path = Path(tmp) / Path(source_key).name
-        store.download_file(source_key, staged_path)
+        store.download_file(
+            source_key,
+            staged_path,
+            progress=progress,
+            label=f"download {Path(source_key).name}",
+        )
         staged_action = dict(action)
         staged_source = dict(source)
         staged_source["absolute_path"] = str(staged_path)
@@ -571,6 +664,7 @@ def _download_from_s3(
             timestamp_utc,
             config,
             target_device,
+            progress,
         )
     result["source_sync_key"] = source_key
     return result
@@ -586,15 +680,29 @@ def _download_from_s3_to_sftp(
     timestamp_utc: str | None,
     config: dict[str, Any] | None,
     target_device: str,
+    progress: ProgressReporter | None,
 ) -> dict[str, Any]:
     source = action["source"]
     source_key = source["sync_key"]
+    target_path = _remote_target_path_for_download(action, target_root, config, target_device)
+    if _remote_target_already_matches_source(client, target_path, source):
+        return {
+            "operation": "download",
+            "status": "skipped",
+            "reason": "already_downloaded",
+            "path": target_path,
+            "source_sync_key": source_key,
+        }
     _verify_store_object_fingerprint(store, source_key, source, role="source")
     with tempfile.TemporaryDirectory() as tmp:
         staged_path = Path(tmp) / Path(source_key).name
-        store.download_file(source_key, staged_path)
+        store.download_file(
+            source_key,
+            staged_path,
+            progress=progress,
+            label=f"download {Path(source_key).name}",
+        )
         _verify_file_fingerprint(staged_path, source, role="source")
-        target_path = _remote_target_path_for_download(action, target_root, config, target_device)
         existing_target_path = _remote_existing_target_path_for_download(action, target_root)
         backup_path = None
         if "target" in action and _sftp_exists(client, existing_target_path):
@@ -626,9 +734,21 @@ def _download_from_s3_to_sftp(
                 output_path=converted_path,
             )
             _verify_conversion_fingerprint(conversion_result, source)
-            _write_sftp_file(client, target_path, converted_path.read_bytes())
+            _write_sftp_file(
+                client,
+                target_path,
+                converted_path.read_bytes(),
+                progress=progress,
+                label=f"write {posixpath.basename(target_path)}",
+            )
         else:
-            _write_sftp_file(client, target_path, staged_path.read_bytes())
+            _write_sftp_file(
+                client,
+                target_path,
+                staged_path.read_bytes(),
+                progress=progress,
+                label=f"write {posixpath.basename(target_path)}",
+            )
 
     result = {
         "operation": "download",
@@ -641,6 +761,26 @@ def _download_from_s3_to_sftp(
     if conversion_result is not None:
         result["conversion"] = _conversion_summary(conversion_result)
     return result
+
+
+def _local_target_already_matches_source(path: Path, source: dict[str, Any]) -> bool:
+    if not item_uses_size_fingerprint(source) or not path.exists():
+        return False
+    expected_size = source.get("native_size", source.get("size"))
+    return expected_size is not None and path.stat().st_size == int(expected_size)
+
+
+def _remote_target_already_matches_source(client: Any, path: str, source: dict[str, Any]) -> bool:
+    if not item_uses_size_fingerprint(source):
+        return False
+    expected_size = source.get("native_size", source.get("size"))
+    if expected_size is None:
+        return False
+    try:
+        stat = client.stat(path)
+    except Exception:
+        return False
+    return int(stat.size) == int(expected_size)
 
 
 def _rename_remote(
@@ -990,6 +1130,8 @@ def _verify_file_fingerprint(path: Path, item: dict[str, Any], role: str) -> Non
             f"{role} file changed since plan: {path}; "
             f"size {actual_size} != expected {expected_size}"
         )
+    if item_uses_size_fingerprint(item):
+        return
     if expected_sha is not None:
         actual_sha = _sha256(path)
         if actual_sha != expected_sha:
@@ -1010,6 +1152,8 @@ def _verify_bytes_fingerprint(data: bytes, item: dict[str, Any], path: str, role
             f"{role} file changed since plan: {path}; "
             f"size {actual_size} != expected {expected_size}"
         )
+    if item_uses_size_fingerprint(item):
+        return
     if expected_sha is not None:
         actual_sha = hashlib.sha256(data).hexdigest()
         if actual_sha != expected_sha:
@@ -1020,6 +1164,20 @@ def _verify_bytes_fingerprint(data: bytes, item: dict[str, Any], path: str, role
 
 
 def _verify_sftp_file_fingerprint(client: Any, path: str, item: dict[str, Any], role: str) -> None:
+    if item_uses_size_fingerprint(item):
+        expected_size = item.get("native_size")
+        if expected_size is None:
+            return
+        try:
+            actual_size = client.stat(path).size
+        except Exception as exc:
+            raise ApplyError(f"failed to stat {role} file {path}: {exc}") from exc
+        if actual_size != int(expected_size):
+            raise ApplyError(
+                f"{role} file changed since plan: {path}; "
+                f"size {actual_size} != expected {expected_size}"
+            )
+        return
     _verify_bytes_fingerprint(_read_sftp_file(client, path), item, path, role)
 
 
@@ -1041,6 +1199,8 @@ def _verify_conversion_fingerprint(
 ) -> None:
     expected_sha = source_item.get("canonical_sha256")
     expected_size = source_item.get("canonical_size")
+    expected_format = source_item.get("canonical_format")
+    actual_format = conversion_result.get("canonical_format")
     if "canonical_size" not in conversion_result and "canonical_sha256" not in conversion_result:
         return
     if expected_size is not None and conversion_result.get("canonical_size") != int(expected_size):
@@ -1049,6 +1209,8 @@ def _verify_conversion_fingerprint(
             f"{conversion_result.get('canonical_size')} != {expected_size}"
         )
     if expected_sha is not None and conversion_result.get("canonical_sha256") != expected_sha:
+        if expected_format != actual_format:
+            return
         raise ApplyError(
             "converted save canonical hash does not match source manifest: "
             f"{conversion_result.get('canonical_sha256')} != {expected_sha}"
@@ -1148,16 +1310,40 @@ def _remote_trash_path(
     return _remote_join(trash_root, category, timestamp, origin_device, relative_path)
 
 
-def _read_sftp_file(client: Any, path: str) -> bytes:
+def _read_sftp_file(
+    client: Any,
+    path: str,
+    progress: ProgressReporter | None = None,
+    label: str | None = None,
+) -> bytes:
     try:
-        return client.read_file(path)
+        try:
+            return client.read_file(path, progress=progress, label=label)
+        except TypeError:
+            data = client.read_file(path)
+            if progress is not None:
+                with progress.task(label or f"read {posixpath.basename(path)}", len(data)) as task:
+                    task.update(len(data))
+            return data
     except SftpError as exc:
         raise ApplyError(str(exc)) from exc
 
 
-def _write_sftp_file(client: Any, path: str, data: bytes) -> None:
+def _write_sftp_file(
+    client: Any,
+    path: str,
+    data: bytes,
+    progress: ProgressReporter | None = None,
+    label: str | None = None,
+) -> None:
     try:
-        client.write_file(path, data)
+        try:
+            client.write_file(path, data, progress=progress, label=label)
+        except TypeError:
+            client.write_file(path, data)
+            if progress is not None:
+                with progress.task(label or f"write {posixpath.basename(path)}", len(data)) as task:
+                    task.update(len(data))
     except SftpError as exc:
         raise ApplyError(str(exc)) from exc
 

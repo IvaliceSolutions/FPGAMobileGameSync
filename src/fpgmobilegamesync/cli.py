@@ -28,6 +28,7 @@ from .executor import (
 )
 from .object_store import LocalObjectStore, ObjectStoreError
 from .planner import PlanError, build_plan
+from .progress import ProgressReporter
 from .remote_scanner import scan_remote
 from .s3_store import S3ObjectStore
 from .scanner import ScanError, scan
@@ -684,6 +685,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Pretty-print JSON output.",
     )
+    sync_parser.add_argument(
+        "--progress",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help="Show per-file progress bars during --apply. Defaults to auto.",
+    )
 
     return parser
 
@@ -1032,6 +1039,7 @@ def main(argv: list[str] | None = None) -> int:
                 _sync_option(args.lock_ttl_seconds, profile, "lock_ttl_seconds", 1800)
             )
             lock_owner = _sync_option(args.lock_owner, profile, "lock_owner")
+            progress = ProgressReporter.from_mode(str(args.progress))
             if direction is None:
                 raise SyncError("--direction is required unless provided by --profile")
             if backend is None:
@@ -1054,6 +1062,7 @@ def main(argv: list[str] | None = None) -> int:
                     allow_conflicts=allow_conflicts,
                     skip_deletes=skip_deletes,
                     report_dir=Path(report_dir) if report_dir else None,
+                    progress=progress if apply_changes else None,
                 )
             elif backend == "s3":
                 result = run_s3_sync(
@@ -1074,6 +1083,7 @@ def main(argv: list[str] | None = None) -> int:
                     source_scan_backend=source_backend,
                     target_scan_backend=target_backend,
                     skip_deletes=skip_deletes,
+                    progress=progress if apply_changes else None,
                 )
             else:
                 raise SyncError(f"unsupported sync backend: {backend}")

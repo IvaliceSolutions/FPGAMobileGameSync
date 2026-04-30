@@ -44,7 +44,7 @@
       },
       "remote": {
         "protocol": "sftp",
-        "host": "mister.local",
+        "host": "192.168.1.84",
         "port": 22,
         "username_env": "MISTER_SYNC_SFTP_USER",
         "password_env": "MISTER_SYNC_SFTP_PASSWORD",
@@ -61,7 +61,7 @@
       },
       "remote": {
         "protocol": "sftp",
-        "host": "thor.local",
+        "host": "192.168.1.140",
         "port": 2222,
         "username_env": "THOR_SYNC_SFTP_USER",
         "password_env": "THOR_SYNC_SFTP_PASSWORD",
@@ -185,7 +185,46 @@
   },
   "save_mappings": {
     "psx": [
-
+      {
+        "mister_game_folder": "Lunar",
+        "retroarch_game_file_stem": "Lunar_fr_cd1"
+      },
+      {
+        "mister_game_folder": "Final Fantasy 9 (FR)",
+        "retroarch_game_file_stem": "Final Fantasy IX (France) (Disc 2)"
+      },
+      {
+        "mister_game_folder": "Final Fantasy VII (FR)",
+        "retroarch_game_file_stem": "Final Fantasy VII (France) (Disc 1)"
+      },
+      {
+        "mister_game_folder": "Dragon Warrior VII",
+        "retroarch_game_file_stem": "Dragon Warrior VII (USA) (Disc 1)"
+      },
+      {
+        "mister_game_folder": "Chrono Cross",
+        "retroarch_game_file_stem": "Chrono Cross (USA) (Disc 1)"
+      },
+      {
+        "mister_game_folder": "Ace Combat 3 - Electrosphere (English v0.9b2)",
+        "retroarch_game_file_stem": "Ace Combat 3 - Electrosphere (English v0.9b2)(Disc 1)"
+      },
+      {
+        "mister_game_folder": "Valkyrie Profile (USA)",
+        "retroarch_game_file_stem": "Valkyrie Profile (USA) (Disc 1)"
+      },
+      {
+        "mister_game_folder": "Final Fantasy VIII (FR)",
+        "retroarch_game_file_stem": "Final Fantasy VIII (France) (Disc 1)"
+      },
+      {
+        "mister_game_folder": "Parasite Eve",
+        "retroarch_game_file_stem": "Parasite Eve (USA) (Disc 1)"
+      },
+      {
+        "mister_game_folder": "Xenogears",
+        "retroarch_game_file_stem": "Xenogears_fr_cd1_undub"
+      }
     ]
   },
   "exclusions": {
