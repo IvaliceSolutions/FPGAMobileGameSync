@@ -6,13 +6,20 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from shutil import get_terminal_size
 from typing import IO, Iterator
 
 
 class ProgressReporter:
-    def __init__(self, enabled: bool, stream: IO[str] | None = None) -> None:
+    def __init__(
+        self,
+        enabled: bool,
+        stream: IO[str] | None = None,
+        width: int | None = None,
+    ) -> None:
         self.enabled = enabled
         self.stream = stream or sys.stderr
+        self.width = width
 
     @classmethod
     def from_mode(cls, mode: str, stream: IO[str] | None = None) -> "ProgressReporter":
@@ -72,20 +79,21 @@ class ProgressTask:
         self.last_draw = now
         elapsed = max(now - self.started_at, 0.001)
         rate = self.current / elapsed
+        width = _stream_width(self.reporter)
+        bar_width = _bar_width(width)
         if self.total and self.total > 0:
             ratio = min(self.current / self.total, 1.0)
-            filled = int(ratio * 24)
-            bar = "#" * filled + "-" * (24 - filled)
+            filled = int(ratio * bar_width)
+            bar = "#" * filled + "-" * (bar_width - filled)
             percent = f"{ratio * 100:5.1f}%"
             size = f"{_format_bytes(self.current)}/{_format_bytes(self.total)}"
         else:
-            bar = "#" * 24
+            bar = "#" * bar_width
             percent = "  n/a"
             size = _format_bytes(self.current)
         suffix = status or f"{_format_bytes(rate)}/s"
-        self.reporter.stream.write(
-            f"\r{self.label:<46} [{bar}] {percent} {size:>19} {suffix:>12}"
-        )
+        line = _format_line(self.label, bar, percent, size, suffix, width)
+        self.reporter.stream.write(f"\r\033[2K{line}")
         self.reporter.stream.flush()
 
 
@@ -114,6 +122,53 @@ def _compact_label(label: str) -> str:
     if 0 < len(name) <= 43:
         return f"...{name}"
     return f"{label[:20]}...{label[-23:]}"
+
+
+def _format_line(label: str, bar: str, percent: str, size: str, suffix: str, width: int) -> str:
+    budget = max(width - 1, 40)
+    progress_part = f" [{bar}] {percent}"
+    details = ""
+    is_final_status = suffix in {"done", "failed"}
+    if is_final_status:
+        if budget >= 78:
+            details += f" {size:>19} {suffix:>8}"
+        elif budget >= 58:
+            details += f" {suffix:>8}"
+    else:
+        if budget >= 68:
+            details += f" {size:>19}"
+        if budget >= 92:
+            details += f" {suffix:>12}"
+    label_width = max(10, budget - len(progress_part) - len(details))
+    fitted_label = _fit_text(label, label_width)
+    return f"{fitted_label:<{label_width}}{progress_part}{details}"[:budget]
+
+
+def _fit_text(value: str, width: int) -> str:
+    if len(value) <= width:
+        return value
+    if width <= 3:
+        return value[:width]
+    name = Path(value).name
+    if len(name) <= width:
+        return name
+    if width <= 12:
+        return f"...{name[-(width - 3):]}"
+    return f"{name[: max(1, width // 2 - 2)]}...{name[-(width - width // 2 - 1):]}"
+
+
+def _stream_width(reporter: ProgressReporter) -> int:
+    if reporter.width is not None:
+        return max(reporter.width, 40)
+    return max(get_terminal_size(fallback=(80, 24)).columns, 40)
+
+
+def _bar_width(width: int) -> int:
+    if width >= 92:
+        return 24
+    if width >= 68:
+        return 18
+    return 12
 
 
 def _format_bytes(value: float) -> str:
