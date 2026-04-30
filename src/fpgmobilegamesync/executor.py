@@ -15,7 +15,7 @@ from .converter import ConversionError, convert_save_file
 from .fingerprint import item_uses_size_fingerprint
 from .object_store import LocalObjectStore
 from .progress import ProgressReporter, copy_file_with_progress
-from .s3_store import S3ObjectStore
+from .s3_store import DEFAULT_MULTIPART_PART_SIZE, S3ObjectStore
 from .save_paths import is_convertible_save, native_save_content_path
 from .sftp_client import SftpError
 
@@ -511,6 +511,21 @@ def _upload_from_sftp(
             "sync_key": target_key,
             "source_remote_path": source_path,
         }
+    if item_uses_size_fingerprint(source) and not _should_convert_for_store(
+        source,
+        config,
+        source_device,
+    ):
+        return _upload_from_sftp_resumable(
+            store=store,
+            action=action,
+            client=client,
+            source_path=source_path,
+            target_key=target_key,
+            origin_device=origin_device,
+            timestamp_utc=timestamp_utc,
+            progress=progress,
+        )
     data = _read_sftp_file(
         client,
         source_path,
@@ -535,6 +550,109 @@ def _upload_from_sftp(
             progress=progress,
         )
     result["source_remote_path"] = source_path
+    return result
+
+
+def _upload_from_sftp_resumable(
+    store: S3ObjectStore,
+    action: dict[str, Any],
+    client: Any,
+    source_path: str,
+    target_key: str,
+    origin_device: str,
+    timestamp_utc: str | None,
+    progress: ProgressReporter | None,
+) -> dict[str, Any]:
+    source = action["source"]
+    _verify_sftp_file_fingerprint(client, source_path, source, role="source")
+    expected_size = source.get("native_size", source.get("size"))
+    if expected_size is None:
+        raise ApplyError(f"cannot resume S3 upload without expected size: {source_path}")
+    expected_size = int(expected_size)
+
+    existing_target_key = action.get("target", {}).get("sync_key", target_key)
+    backup_key = None
+    if "target" in action and store.object_exists(existing_target_key):
+        _verify_store_object_fingerprint(
+            store,
+            existing_target_key,
+            action["target"],
+            role="target",
+        )
+    if action.get("backup_target_before_apply") and store.object_exists(existing_target_key):
+        backup_key = store.backup_object(
+            existing_target_key,
+            origin_device=origin_device,
+            timestamp_utc=timestamp_utc,
+        )
+    if (
+        action.get("rename_target_before_copy")
+        and existing_target_key != target_key
+        and store.object_exists(existing_target_key)
+    ):
+        store.rename_object(existing_target_key, target_key)
+
+    metadata = {
+        "sha256": str(source.get("native_sha256", source.get("sha256", ""))),
+        "size": str(expected_size),
+    }
+    state = store.begin_or_resume_multipart_upload(
+        target_key,
+        expected_size=expected_size,
+        metadata=metadata,
+        part_size=DEFAULT_MULTIPART_PART_SIZE,
+    )
+    parts = list(state.get("parts", []))
+    uploaded_size = _multipart_uploaded_size(parts)
+    if uploaded_size > expected_size:
+        raise ApplyError(
+            f"multipart upload for {target_key} is larger than source: "
+            f"{uploaded_size} > {expected_size}"
+        )
+    next_part_number = _next_multipart_part_number(parts)
+    reporter = progress or ProgressReporter(False)
+    if uploaded_size < expected_size:
+        with reporter.task(f"read/upload {posixpath.basename(source_path)}", expected_size) as task:
+            if uploaded_size:
+                task.update(uploaded_size)
+            for chunk in _read_sftp_file_chunks(
+                client,
+                source_path,
+                start=uploaded_size,
+                chunk_size=int(state["part_size"]),
+            ):
+                part = store.upload_multipart_part(
+                    target_key,
+                    upload_id=str(state["upload_id"]),
+                    part_number=next_part_number,
+                    data=chunk,
+                )
+                parts.append(part)
+                next_part_number += 1
+                task.update(len(chunk))
+    final_uploaded_size = _multipart_uploaded_size(parts)
+    if final_uploaded_size != expected_size:
+        raise ApplyError(
+            f"multipart upload incomplete for {target_key}: "
+            f"{final_uploaded_size} != expected {expected_size}"
+        )
+    store.complete_multipart_upload(
+        target_key,
+        upload_id=str(state["upload_id"]),
+        parts=parts,
+        state_key=str(state["state_key"]),
+    )
+    _verify_store_object_fingerprint(store, target_key, source, role="target")
+    result = {
+        "operation": "upload",
+        "status": "applied",
+        "sync_key": target_key,
+        "source_remote_path": source_path,
+    }
+    if uploaded_size:
+        result["resumed_from_bytes"] = uploaded_size
+    if backup_key is not None:
+        result["backup_key"] = backup_key
     return result
 
 
@@ -670,6 +788,51 @@ def _download_from_s3(
     return result
 
 
+def _download_s3_to_sftp_resumable(
+    store: S3ObjectStore,
+    source_key: str,
+    source: dict[str, Any],
+    client: Any,
+    target_path: str,
+    progress: ProgressReporter | None,
+) -> dict[str, Any]:
+    expected_size = source.get("native_size", source.get("size"))
+    if expected_size is None:
+        raise ApplyError(f"cannot resume SFTP download without expected size: {source_key}")
+    expected_size = int(expected_size)
+    temp_path = _temporary_sftp_write_path(target_path)
+    resume_offset = _sftp_resume_offset(client, temp_path, expected_size)
+    result: dict[str, Any] = {"staged_path": temp_path}
+    if resume_offset:
+        result["resumed_from_bytes"] = resume_offset
+    if resume_offset < expected_size:
+        reporter = progress or ProgressReporter(False)
+        with reporter.task(f"download/write {posixpath.basename(target_path)}", expected_size) as task:
+            if resume_offset:
+                task.update(resume_offset)
+            for chunk in store.object_chunks(source_key, start=resume_offset):
+                _append_sftp_file(client, temp_path, chunk)
+                task.update(len(chunk))
+    _verify_sftp_size(client, temp_path, expected_size, role="staged target")
+    if _sftp_exists(client, target_path):
+        _remove_sftp_file(client, target_path)
+    _rename_sftp_path_case_aware(client, temp_path, target_path)
+    return result
+
+
+def _sftp_resume_offset(client: Any, temp_path: str, expected_size: int) -> int:
+    if not _sftp_exists(client, temp_path):
+        return 0
+    try:
+        actual_size = int(client.stat(temp_path).size)
+    except Exception as exc:
+        raise ApplyError(f"failed to stat staged target file {temp_path}: {exc}") from exc
+    if actual_size > expected_size:
+        _remove_sftp_file(client, temp_path)
+        return 0
+    return actual_size
+
+
 def _download_from_s3_to_sftp(
     store: S3ObjectStore,
     action: dict[str, Any],
@@ -694,68 +857,84 @@ def _download_from_s3_to_sftp(
             "source_sync_key": source_key,
         }
     _verify_store_object_fingerprint(store, source_key, source, role="source")
-    with tempfile.TemporaryDirectory() as tmp:
-        staged_path = Path(tmp) / Path(source_key).name
-        store.download_file(
-            source_key,
-            staged_path,
-            progress=progress,
-            label=f"download {Path(source_key).name}",
+    existing_target_path = _remote_existing_target_path_for_download(action, target_root)
+    backup_path = None
+    if "target" in action and _sftp_exists(client, existing_target_path):
+        _verify_sftp_file_fingerprint(client, existing_target_path, action["target"], role="target")
+    if action.get("backup_target_before_apply") and _sftp_exists(client, existing_target_path):
+        backup_path = _backup_sftp_file(
+            client,
+            existing_target_path,
+            target_root,
+            trash_root,
+            origin_device,
+            timestamp_utc,
         )
-        _verify_file_fingerprint(staged_path, source, role="source")
-        existing_target_path = _remote_existing_target_path_for_download(action, target_root)
-        backup_path = None
-        if "target" in action and _sftp_exists(client, existing_target_path):
-            _verify_sftp_file_fingerprint(client, existing_target_path, action["target"], role="target")
-        if action.get("backup_target_before_apply") and _sftp_exists(client, existing_target_path):
-            backup_path = _backup_sftp_file(
-                client,
-                existing_target_path,
-                target_root,
-                trash_root,
-                origin_device,
-                timestamp_utc,
-            )
-        if (
-            action.get("rename_target_before_copy")
-            and existing_target_path != target_path
-            and _sftp_exists(client, existing_target_path)
-        ):
-            _rename_sftp_path_case_aware(client, existing_target_path, target_path)
+    if (
+        action.get("rename_target_before_copy")
+        and existing_target_path != target_path
+        and _sftp_exists(client, existing_target_path)
+    ):
+        _rename_sftp_path_case_aware(client, existing_target_path, target_path)
 
-        conversion_result = None
-        if _should_convert_for_target(source, config, target_device):
-            converted_path = Path(tmp) / f"converted-{Path(target_path).name}"
-            conversion_result = _convert_save(
-                config=config,
-                system=source["system"],
-                direction="mister-to-thor",
-                source_path=staged_path,
-                output_path=converted_path,
-            )
-            _verify_conversion_fingerprint(conversion_result, source)
-            _write_sftp_file_atomically(
-                client,
-                target_path,
-                converted_path.read_bytes(),
+    conversion_result = None
+    transfer_result: dict[str, Any] = {}
+    can_resume_to_sftp = item_uses_size_fingerprint(source) and not _should_convert_for_target(
+        source,
+        config,
+        target_device,
+    )
+    if can_resume_to_sftp:
+        transfer_result = _download_s3_to_sftp_resumable(
+            store=store,
+            source_key=source_key,
+            source=source,
+            client=client,
+            target_path=target_path,
+            progress=progress,
+        )
+    else:
+        with tempfile.TemporaryDirectory() as tmp:
+            staged_path = Path(tmp) / Path(source_key).name
+            store.download_file(
+                source_key,
+                staged_path,
                 progress=progress,
-                label=f"write {posixpath.basename(target_path)}",
+                label=f"download {Path(source_key).name}",
             )
-        else:
-            _write_sftp_file_atomically(
-                client,
-                target_path,
-                staged_path.read_bytes(),
-                progress=progress,
-                label=f"write {posixpath.basename(target_path)}",
-            )
-
+            _verify_file_fingerprint(staged_path, source, role="source")
+            if _should_convert_for_target(source, config, target_device):
+                converted_path = Path(tmp) / f"converted-{Path(target_path).name}"
+                conversion_result = _convert_save(
+                    config=config,
+                    system=source["system"],
+                    direction="mister-to-thor",
+                    source_path=staged_path,
+                    output_path=converted_path,
+                )
+                _verify_conversion_fingerprint(conversion_result, source)
+                _write_sftp_file_atomically(
+                    client,
+                    target_path,
+                    converted_path.read_bytes(),
+                    progress=progress,
+                    label=f"write {posixpath.basename(target_path)}",
+                )
+            else:
+                _write_sftp_file_atomically(
+                    client,
+                    target_path,
+                    staged_path.read_bytes(),
+                    progress=progress,
+                    label=f"write {posixpath.basename(target_path)}",
+                )
     result = {
         "operation": "download",
         "status": "applied",
         "path": target_path,
         "source_sync_key": source_key,
     }
+    result.update(transfer_result)
     if backup_path is not None:
         result["backup_path"] = backup_path
     if conversion_result is not None:
@@ -1329,6 +1508,28 @@ def _read_sftp_file(
         raise ApplyError(str(exc)) from exc
 
 
+def _read_sftp_file_chunks(
+    client: Any,
+    path: str,
+    start: int,
+    chunk_size: int,
+) -> Any:
+    try:
+        try:
+            yield from client.read_file_chunks(path, start=start, chunk_size=chunk_size)
+            return
+        except AttributeError:
+            pass
+        except TypeError:
+            yield from client.read_file_chunks(path, start, chunk_size)
+            return
+        data = client.read_file(path)
+        for offset in range(start, len(data), chunk_size):
+            yield data[offset : offset + chunk_size]
+    except SftpError as exc:
+        raise ApplyError(str(exc)) from exc
+
+
 def _write_sftp_file(
     client: Any,
     path: str,
@@ -1344,6 +1545,19 @@ def _write_sftp_file(
             if progress is not None:
                 with progress.task(label or f"write {posixpath.basename(path)}", len(data)) as task:
                     task.update(len(data))
+    except SftpError as exc:
+        raise ApplyError(str(exc)) from exc
+
+
+def _append_sftp_file(client: Any, path: str, data: bytes) -> None:
+    try:
+        try:
+            client.append_file(path, data)
+        except AttributeError:
+            existing = _read_sftp_file(client, path) if _sftp_exists(client, path) else b""
+            _write_sftp_file(client, path, existing + data)
+        except TypeError:
+            client.append_file(path, data)
     except SftpError as exc:
         raise ApplyError(str(exc)) from exc
 
@@ -1403,6 +1617,16 @@ def _verify_sftp_size(client: Any, path: str, expected_size: int, role: str) -> 
             f"{role} file changed during write: {path}; "
             f"size {actual_size} != expected {expected_size}"
         )
+
+
+def _multipart_uploaded_size(parts: list[dict[str, Any]]) -> int:
+    return sum(int(part.get("Size", 0)) for part in parts)
+
+
+def _next_multipart_part_number(parts: list[dict[str, Any]]) -> int:
+    if not parts:
+        return 1
+    return max(int(part["PartNumber"]) for part in parts) + 1
 
 
 def _rename_sftp_path_case_aware(client: Any, old_path: str, new_path: str) -> None:

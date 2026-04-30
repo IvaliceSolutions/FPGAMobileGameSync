@@ -535,6 +535,97 @@ class S3ObjectStoreTests(unittest.TestCase):
             )
         )
 
+    def test_apply_s3_download_resumes_staged_sftp_target(self) -> None:
+        client = FakeS3Client({"systems/gba/games/Game.gba": b"complete-rom"})
+        store = S3ObjectStore(client=client, bucket="bucket")
+        source = _s3_item("Game.gba", b"complete-rom")
+        plan = {
+            "source": "s3",
+            "target": "thor",
+            "actions": [
+                {
+                    "operation": "download",
+                    "reason": "added",
+                    "source": source,
+                }
+            ],
+        }
+        remote = FakeRemoteClient({"/target/.Game.gba.fpgms-tmp": b"complete"})
+
+        result = apply_plan_from_s3_to_sftp_target(
+            plan=plan,
+            config={},
+            client=remote,
+            target_root="/target",
+            store=store,
+        )
+
+        self.assertEqual(result["summary"]["download:applied"], 1)
+        self.assertEqual(result["applied"][0]["resumed_from_bytes"], 8)
+        self.assertEqual(remote.files["/target/Game.gba"], b"complete-rom")
+        self.assertEqual(client.get_object_ranges[-1], "bytes=8-")
+
+    def test_apply_sftp_upload_resumes_multipart_upload(self) -> None:
+        with patch("fpgmobilegamesync.executor.DEFAULT_MULTIPART_PART_SIZE", 4):
+            client = FakeS3Client({})
+            store = S3ObjectStore(client=client, bucket="bucket")
+            source = _s3_item("Game.gba", b"complete-rom")
+            source["device"] = "mister"
+            source["absolute_path"] = "/source/Game.gba"
+            source["fingerprint_type"] = "size"
+            source["sha256"] = "size:game.gba:12"
+            source["native_sha256"] = "size:game.gba:12"
+            source["canonical_sha256"] = "size:game.gba:12"
+            upload = client.create_multipart_upload(
+                Bucket="bucket",
+                Key="systems/gba/games/Game.gba",
+                Metadata={"sha256": source["native_sha256"], "size": "12"},
+            )
+            client.upload_part(
+                Bucket="bucket",
+                Key="systems/gba/games/Game.gba",
+                UploadId=upload["UploadId"],
+                PartNumber=1,
+                Body=b"comp",
+            )
+            state_key = store._multipart_state_key("systems/gba/games/Game.gba")
+            client.put_object(
+                Bucket="bucket",
+                Key=state_key,
+                Body=json.dumps(
+                    {
+                        "sync_key": "systems/gba/games/Game.gba",
+                        "upload_id": upload["UploadId"],
+                        "expected_size": 12,
+                        "part_size": 4,
+                    }
+                ).encode("utf-8"),
+            )
+            plan = {
+                "source": "mister",
+                "target": "s3",
+                "actions": [
+                    {
+                        "operation": "upload",
+                        "reason": "added",
+                        "source": source,
+                    }
+                ],
+            }
+            remote = FakeRemoteClient({"/source/Game.gba": b"complete-rom"})
+
+            result = apply_plan_from_sftp_to_s3_store(
+                plan=plan,
+                config={},
+                client=remote,
+                store=store,
+            )
+
+        self.assertEqual(result["summary"]["upload:applied"], 1)
+        self.assertEqual(result["applied"][0]["resumed_from_bytes"], 4)
+        self.assertEqual(client.objects["systems/gba/games/Game.gba"], b"complete-rom")
+        self.assertNotIn(state_key, client.objects)
+
     def test_failed_s3_download_write_keeps_existing_sftp_target(self) -> None:
         client = FakeS3Client({"systems/gba/games/Game.gba": b"complete-rom"})
         store = S3ObjectStore(client=client, bucket="bucket")
@@ -599,11 +690,19 @@ class FakeS3Client:
     def __init__(self, objects: dict[str, bytes]) -> None:
         self.objects = dict(objects)
         self.get_object_keys: list[str] = []
+        self.get_object_ranges: list[str | None] = []
+        self.multipart_uploads: dict[str, dict[str, object]] = {}
+        self.next_upload_id = 1
 
-    def get_object(self, Bucket: str, Key: str) -> dict:
+    def get_object(self, Bucket: str, Key: str, Range: str | None = None) -> dict:
         self._require(Key)
         self.get_object_keys.append(Key)
-        return {"Body": io.BytesIO(self.objects[Key])}
+        self.get_object_ranges.append(Range)
+        data = self.objects[Key]
+        if Range:
+            start_text = Range.removeprefix("bytes=").split("-", 1)[0]
+            data = data[int(start_text) :]
+        return {"Body": io.BytesIO(data), "ContentLength": len(data)}
 
     def put_object(self, Bucket: str, Key: str, Body: bytes, **kwargs: object) -> None:
         if kwargs.get("IfNoneMatch") == "*" and Key in self.objects:
@@ -621,6 +720,58 @@ class FakeS3Client:
 
     def delete_object(self, Bucket: str, Key: str) -> None:
         self.objects.pop(Key, None)
+
+    def create_multipart_upload(self, Bucket: str, Key: str, **_kwargs: object) -> dict:
+        upload_id = f"upload-{self.next_upload_id}"
+        self.next_upload_id += 1
+        self.multipart_uploads[upload_id] = {"key": Key, "parts": {}}
+        return {"UploadId": upload_id}
+
+    def upload_part(
+        self,
+        Bucket: str,
+        Key: str,
+        UploadId: str,
+        PartNumber: int,
+        Body: bytes,
+    ) -> dict:
+        upload = self.multipart_uploads[UploadId]
+        if upload["key"] != Key:
+            raise FakeNotFound(Key)
+        etag = f"etag-{UploadId}-{PartNumber}"
+        upload["parts"][PartNumber] = {"data": Body, "ETag": etag}
+        return {"ETag": etag}
+
+    def list_parts(self, Bucket: str, Key: str, UploadId: str, **_kwargs: object) -> dict:
+        upload = self.multipart_uploads[UploadId]
+        if upload["key"] != Key:
+            raise FakeNotFound(Key)
+        return {
+            "Parts": [
+                {
+                    "PartNumber": part_number,
+                    "ETag": part["ETag"],
+                    "Size": len(part["data"]),
+                }
+                for part_number, part in sorted(upload["parts"].items())
+            ],
+            "IsTruncated": False,
+        }
+
+    def complete_multipart_upload(
+        self,
+        Bucket: str,
+        Key: str,
+        UploadId: str,
+        MultipartUpload: dict,
+    ) -> None:
+        upload = self.multipart_uploads.pop(UploadId)
+        if upload["key"] != Key:
+            raise FakeNotFound(Key)
+        self.objects[Key] = b"".join(
+            upload["parts"][part["PartNumber"]]["data"]
+            for part in MultipartUpload["Parts"]
+        )
 
     def list_objects_v2(self, Bucket: str, Prefix: str, **_kwargs: object) -> dict:
         contents = [
@@ -665,12 +816,24 @@ class FakeRemoteClient:
             raise SftpError(f"missing: {path}")
         return self.files[path]
 
+    def read_file_chunks(self, path: str, start: int = 0, chunk_size: int = 1024 * 1024) -> object:
+        data = self.read_file(path)
+        for offset in range(start, len(data), chunk_size):
+            yield data[offset : offset + chunk_size]
+
     def write_file(self, path: str, data: bytes, **_kwargs: object) -> None:
         self.operations.append(("write", path))
         if self.fail_writes_matching and self.fail_writes_matching in path:
             self.files[path] = data[: max(0, len(data) // 2)]
             raise SftpError(f"simulated write failure: {path}")
         self.files[path] = data
+
+    def append_file(self, path: str, data: bytes) -> None:
+        self.operations.append(("append", path))
+        if self.fail_writes_matching and self.fail_writes_matching in path:
+            self.files[path] = self.files.get(path, b"") + data[: max(0, len(data) // 2)]
+            raise SftpError(f"simulated append failure: {path}")
+        self.files[path] = self.files.get(path, b"") + data
 
     def remove(self, path: str) -> None:
         self.operations.append(("remove", path))

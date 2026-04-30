@@ -114,6 +114,21 @@ class SftpDeviceClient:
         except Exception as exc:
             raise SftpError(f"failed to read remote file {path}: {exc}") from exc
 
+    def read_file_chunks(
+        self,
+        path: str,
+        start: int = 0,
+        chunk_size: int = 1024 * 1024,
+    ) -> Any:
+        try:
+            with self.sftp_client.open(path, "rb") as handle:
+                if start:
+                    handle.seek(start)
+                for chunk in iter(lambda: handle.read(chunk_size), b""):
+                    yield chunk
+        except Exception as exc:
+            raise SftpError(f"failed to read remote file {path}: {exc}") from exc
+
     def write_file(
         self,
         path: str,
@@ -132,6 +147,14 @@ class SftpDeviceClient:
                         task.update(len(chunk))
         except Exception as exc:
             raise SftpError(f"failed to write remote file {path}: {exc}") from exc
+
+    def append_file(self, path: str, data: bytes) -> None:
+        self.makedirs(posixpath.dirname(path))
+        try:
+            with self.sftp_client.open(path, "ab") as handle:
+                handle.write(data)
+        except Exception as exc:
+            raise SftpError(f"failed to append remote file {path}: {exc}") from exc
 
     def exists(self, path: str) -> bool:
         try:

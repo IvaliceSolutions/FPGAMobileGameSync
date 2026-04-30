@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from .fingerprint import (
     SHA256_FINGERPRINT,
@@ -20,6 +20,10 @@ from .fingerprint import (
 )
 from .object_store import ObjectStoreError
 from .progress import ProgressReporter
+
+
+MULTIPART_STATE_PREFIX = ".fpgms/multipart"
+DEFAULT_MULTIPART_PART_SIZE = 8 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -161,6 +165,105 @@ class S3ObjectStore:
         except Exception as exc:
             raise ObjectStoreError(f"failed to upload S3 object {sync_key}: {exc}") from exc
 
+    def begin_or_resume_multipart_upload(
+        self,
+        sync_key: str,
+        expected_size: int,
+        metadata: dict[str, str],
+        part_size: int = DEFAULT_MULTIPART_PART_SIZE,
+    ) -> dict[str, Any]:
+        state_key = self._multipart_state_key(sync_key)
+        state = self._read_multipart_state(state_key)
+        if _valid_multipart_state(state, sync_key, expected_size, part_size):
+            try:
+                parts = self.list_multipart_parts(sync_key, state["upload_id"])
+                return {**state, "state_key": state_key, "parts": parts}
+            except ObjectStoreError:
+                self.delete_object(state_key)
+
+        try:
+            response = self.client.create_multipart_upload(
+                Bucket=self.bucket,
+                Key=self._remote_key(sync_key),
+                Metadata=metadata,
+            )
+            upload_id = str(response["UploadId"])
+        except Exception as exc:
+            raise ObjectStoreError(f"failed to start multipart upload {sync_key}: {exc}") from exc
+        state = {
+            "sync_key": sync_key,
+            "upload_id": upload_id,
+            "expected_size": expected_size,
+            "part_size": part_size,
+        }
+        self._write_multipart_state(state_key, state)
+        return {**state, "state_key": state_key, "parts": []}
+
+    def list_multipart_parts(self, sync_key: str, upload_id: str) -> list[dict[str, Any]]:
+        parts: list[dict[str, Any]] = []
+        marker = None
+        while True:
+            kwargs: dict[str, Any] = {
+                "Bucket": self.bucket,
+                "Key": self._remote_key(sync_key),
+                "UploadId": upload_id,
+            }
+            if marker is not None:
+                kwargs["PartNumberMarker"] = marker
+            try:
+                response = self.client.list_parts(**kwargs)
+            except Exception as exc:
+                raise ObjectStoreError(f"failed to list multipart upload {sync_key}: {exc}") from exc
+            parts.extend(response.get("Parts", []))
+            if not response.get("IsTruncated"):
+                break
+            marker = response.get("NextPartNumberMarker")
+        return sorted(parts, key=lambda part: int(part["PartNumber"]))
+
+    def upload_multipart_part(
+        self,
+        sync_key: str,
+        upload_id: str,
+        part_number: int,
+        data: bytes,
+    ) -> dict[str, Any]:
+        try:
+            response = self.client.upload_part(
+                Bucket=self.bucket,
+                Key=self._remote_key(sync_key),
+                UploadId=upload_id,
+                PartNumber=part_number,
+                Body=data,
+            )
+        except Exception as exc:
+            raise ObjectStoreError(
+                f"failed to upload multipart part {part_number} for {sync_key}: {exc}"
+            ) from exc
+        etag = str(response.get("ETag", "")).strip('"')
+        return {"PartNumber": part_number, "ETag": etag, "Size": len(data)}
+
+    def complete_multipart_upload(
+        self,
+        sync_key: str,
+        upload_id: str,
+        parts: list[dict[str, Any]],
+        state_key: str,
+    ) -> None:
+        payload_parts = [
+            {"PartNumber": int(part["PartNumber"]), "ETag": str(part["ETag"])}
+            for part in sorted(parts, key=lambda item: int(item["PartNumber"]))
+        ]
+        try:
+            self.client.complete_multipart_upload(
+                Bucket=self.bucket,
+                Key=self._remote_key(sync_key),
+                UploadId=upload_id,
+                MultipartUpload={"Parts": payload_parts},
+            )
+        except Exception as exc:
+            raise ObjectStoreError(f"failed to complete multipart upload {sync_key}: {exc}") from exc
+        self.delete_object(state_key)
+
     def download_file(
         self,
         sync_key: str,
@@ -175,6 +278,34 @@ class S3ObjectStore:
         )
         target_path.parent.mkdir(parents=True, exist_ok=True)
         target_path.write_bytes(data)
+
+    def object_chunks(
+        self,
+        sync_key: str,
+        start: int = 0,
+        chunk_size: int = 1024 * 1024,
+    ) -> Iterator[bytes]:
+        if start < 0:
+            raise ObjectStoreError(f"invalid S3 range start for {sync_key}: {start}")
+        kwargs: dict[str, Any] = {
+            "Bucket": self.bucket,
+            "Key": self._remote_key(sync_key),
+        }
+        if start > 0:
+            kwargs["Range"] = f"bytes={start}-"
+        try:
+            response = self.client.get_object(**kwargs)
+            body = response["Body"]
+        except Exception as exc:
+            raise ObjectStoreError(f"failed to read S3 object {sync_key}: {exc}") from exc
+        try:
+            for chunk in iter(lambda: body.read(chunk_size), b""):
+                yield chunk
+        except Exception as exc:
+            raise ObjectStoreError(f"failed to stream S3 object {sync_key}: {exc}") from exc
+        finally:
+            if hasattr(body, "close"):
+                body.close()
 
     def copy_object(self, from_sync_key: str, to_sync_key: str) -> None:
         source_key = self._remote_key(from_sync_key)
@@ -547,6 +678,38 @@ class S3ObjectStore:
         except Exception as exc:
             raise ObjectStoreError(f"failed to upload S3 object {sync_key}: {exc}") from exc
 
+    def _multipart_state_key(self, sync_key: str) -> str:
+        digest = hashlib.sha256(self._remote_key(sync_key).encode("utf-8")).hexdigest()
+        return f"{MULTIPART_STATE_PREFIX}/{digest}.json"
+
+    def _read_multipart_state(self, state_key: str) -> dict[str, Any] | None:
+        try:
+            response = self.client.get_object(
+                Bucket=self.bucket,
+                Key=self._remote_key(state_key),
+            )
+        except Exception as exc:
+            if _is_missing_object_error(exc):
+                return None
+            raise ObjectStoreError(f"failed to read multipart state {state_key}: {exc}") from exc
+        try:
+            state = json.loads(_read_body(response["Body"]).decode("utf-8"))
+        except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ObjectStoreError(f"invalid multipart state {state_key}") from exc
+        return state if isinstance(state, dict) else None
+
+    def _write_multipart_state(self, state_key: str, state: dict[str, Any]) -> None:
+        body = json.dumps(state, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+        try:
+            self.client.put_object(
+                Bucket=self.bucket,
+                Key=self._remote_key(state_key),
+                Body=body,
+                ContentType="application/json",
+            )
+        except Exception as exc:
+            raise ObjectStoreError(f"failed to write multipart state {state_key}: {exc}") from exc
+
 
 def s3_connection_from_config(config: dict[str, Any]) -> S3Connection:
     s3 = config.get("s3")
@@ -684,6 +847,22 @@ def _read_path_bytes_with_progress(
                 chunks.append(chunk)
                 task.update(len(chunk))
     return b"".join(chunks)
+
+
+def _valid_multipart_state(
+    state: dict[str, Any] | None,
+    sync_key: str,
+    expected_size: int,
+    part_size: int,
+) -> bool:
+    if not state:
+        return False
+    return (
+        state.get("sync_key") == sync_key
+        and str(state.get("upload_id", ""))
+        and int(state.get("expected_size", -1)) == expected_size
+        and int(state.get("part_size", -1)) == part_size
+    )
 
 
 def _is_missing_object_error(exc: Exception) -> bool:
